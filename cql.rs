@@ -31,17 +31,16 @@ fn main() {
 
     q = "insert into rust.test (id, f32) values (?, ?)";
     println!("Create prepared: {}", q);
-    let res_id = client.prepared_statement(q);
+    let res_id = client.prepared_statement(q, "test");
     println!("Result prepared: {} \n", res);
 
     if res_id.is_err() {
         fail!("Error in creating prepared statement")
     }
 
-    let ps_id = res_id.unwrap();
-    println!("Execute prepared: {}", ps_id);
-    let params: Vec<cql::CqlValue> = vec![cql::CqlVarchar(Some("ttrwe".into_maybe_owned())), cql::CqlFloat(Some(15.1617))];
-    res = client.exec_prepared(ps_id, params, cql::Consistency::One);
+    println!("Execute prepared");
+    let params: &[cql::CqlValue] = &[cql::CqlVarchar(Some("ttrwe".into_maybe_owned())), cql::CqlFloat(Some(15.1617))];
+    res = client.exec_prepared("test", params, cql::Consistency::One);
     println!("Result: {} \n", res);
 
     q = "select * from rust.test";
