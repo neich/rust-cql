@@ -9,6 +9,7 @@ use std::str::SendStr;
 use super::def::*;
 use super::serialize::*;
 use super::reader::*;
+use std::collections::TreeMap;
 
 pub static CQL_VERSION_STRINGS:  [&'static str, .. 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
@@ -22,18 +23,19 @@ macro_rules! serialize_and_check_io_error(
     }
 )
 
+type PrepsStore = TreeMap<String, Box<CqlPreparedStat>>;
 
 pub struct CqlClient {
     socket: std::io::net::tcp::TcpStream,
     pub version: u8,
-    prepared: Vec<Box<CqlPreparedStat>>
+    prepared: PrepsStore
 }
 
 
 impl CqlClient {
 
     fn new(socket: std::io::net::tcp::TcpStream, version: u8) -> CqlClient {
-        CqlClient {socket: socket, version: version, prepared: vec![]}
+        CqlClient {socket: socket, version: version, prepared: TreeMap::new()}
     }
 
     fn build_auth<'a>(&self, creds: &'a Vec<SendStr>, stream: i8) -> CqlRequest<'a> {
@@ -56,28 +58,6 @@ impl CqlClient {
         };
     }
 
-/*
-    fn build_exec<'a>(&'a self, stream: i8, preps: &'a CqlPreparedStat, params: Vec<CqlValue>, con: Consistency::Consistency, query_flags: u8) -> CqlRequest<'a> {
-        return CqlRequest {
-            version: self.version,
-            flags: 0x00,
-            stream: stream,
-            opcode: OpcodeQuery,
-            body: RequestExec(preps, params, con, query_flags),
-        };
-    }
-  */
-    fn build_prepared(&self, stream: i8, query_str: SendStr) -> CqlRequest {
-        return CqlRequest {
-            version: self.version,
-            flags: 0x00,
-            stream: stream,
-            opcode: OpcodePrepare,
-            body: RequestPrepare(query_str),
-        };
-    }
-
-
     pub fn exec_query(&mut self, query_str: &'static str, con: Consistency::Consistency) -> RCResult<CqlResponse> {
         let q = CqlRequest {
             version: self.version,
@@ -92,13 +72,18 @@ impl CqlClient {
         Ok(res)
     }
 
-    pub fn exec_prepared(&mut self, ps_id: uint, params: Vec<CqlValue>, con: Consistency::Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_prepared(&mut self, ps_id: &str, params: &[CqlValue], con: Consistency::Consistency) -> RCResult<CqlResponse> {
+        let preps = match self.prepared.find(&String::from_str(ps_id)) {
+            Some(ps) => ps,
+            None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
+        };
+
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeExecute,
-            body: RequestExec(*self.prepared.get(ps_id), params, con, 0x01),
+            body: RequestExec(*preps, params, con, 0x01),
         };
 
         serialize_and_check_io_error!(&mut self.socket, q, self.version, "Error serializing prepared statement execution");
@@ -119,16 +104,23 @@ impl CqlClient {
         Ok(read_and_check_io_error!(self.socket, read_cql_response, "Error reading prepared statement execution result"))
     }
 
-    pub fn prepared_statement(&mut self, query_str: &'static str) -> RCResult<uint> {
-        let q = self.build_prepared(0x01, query_str.into_maybe_owned());
+    pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<()> {
+        let q = CqlRequest {
+            version: self.version,
+            flags: 0x00,
+            stream: 0x01,
+            opcode: OpcodePrepare,
+            body: RequestPrepare(query_str),
+        };
+
 
         serialize_and_check_io_error!(&mut self.socket, q, self.version, "Error serializing prepared statement");
 
         let res = read_and_check_io_error!(&mut self.socket, read_cql_response, "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
-                self.prepared.push(preps);
-                Ok(self.prepared.len()-1)
+                self.prepared.insert(String::from_str(query_id), preps);
+                Ok(())
             },
             _ => Err(RCError::new("Response does not contain prepared statement", ReadError))
         }
