@@ -58,13 +58,13 @@ impl CqlClient {
         };
     }
 
-    pub fn exec_query(&mut self, query_str: &'static str, con: Consistency::Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_query(&mut self, query_str: &str, con: Consistency::Consistency) -> RCResult<CqlResponse> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeQuery,
-            body: RequestQuery(query_str.into_maybe_owned(), con, 0)};
+            body: RequestQuery(query_str, con, 0)};
 
         let ref mut socket = self.socket;
         serialize_and_check_io_error!(socket, q, self.version, "Error serializing query");
