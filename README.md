@@ -1,7 +1,7 @@
 rust-cql
 ========
 
-
+This project is based on [yjh0502/rust-cql](https://github.com/yjh0502/rust-cql)
 
 Cassandra Query Language version 3 (cql3) binary protocol implementation with rust-lang. It should work for versions v1, v2 and v3 of the protocol [1] [2] [3]. It compiles with rut 0.11.
 
