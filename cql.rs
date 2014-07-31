@@ -1,47 +1,66 @@
-extern mod std;
-extern mod cql_client (name="cql_client", vers="0.0.1");
-
-use core::rand;
-use std::time;
-
-static str_seq:&'static str = "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM";
-static str_seq_len:uint = 26 * 2;
-
-fn rand_str(size: uint) -> ~str {
-    let mut bytes:~[u8] = ~[];
-    for uint::range(0, size) |_| {
-        bytes.push(str_seq[rand::random::<uint>() % str_seq_len]);
-    }
-    str::from_bytes(bytes)
-}
-
-fn time_diff(start: time::Timespec, end: time::Timespec) -> float {
-    return (end.sec - start.sec) as float + (end.nsec - start.nsec) as float/1e9f;
-}
+extern crate std;
+extern crate cql;
 
 fn main() {
-    let res = cql_client::connect(~"127.0.0.1", 9042, None);
-    if res.is_err() {
-        io::println(fmt!("%?", res.get_err()));
-        fail!(~"Failed to connect");
+    println!("Connecting ...!");
+    let mut client = match cql::connect("127.0.0.1", 9042, None) {
+        Ok(c) => c,
+        Err(e) => fail!(format!("Failed to connect: {}", e.desc))
+    };
+    println!("Connected with CQL binary version v{}", client.version);
+
+    let mut q = "create keyspace rust with replication = {'class': 'SimpleStrategy', 'replication_factor':1}";
+    println!("Query: {}", q);
+    let mut res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
+
+    q = "create table rust.test (id text primary key, f32 float, f64 double, i32 int, i64 bigint, b boolean, ip inet)";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
+
+    q = "insert into rust.test (id, f32, f64, i32, i64, b, ip) values ('asdf', 1.2345, 3.14159, 47, 59, true, '127.0.0.1')";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
+
+    q = "select * from rust.test";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
+
+    q = "insert into rust.test (id, f32) values (?, ?)";
+    println!("Create prepared: {}", q);
+    let res_id = client.prepared_statement(q);
+    println!("Result prepared: {} \n", res);
+
+    if res_id.is_err() {
+        fail!("Error in creating prepared statement")
     }
 
-    let client = res.get();
+    let ps_id = res_id.unwrap();
+    println!("Execute prepared: {}", ps_id);
+    let params: Vec<cql::CqlValue> = vec![cql::CqlVarchar(Some("ttrwe".into_maybe_owned())), cql::CqlFloat(Some(15.1617))];
+    res = client.exec_prepared(ps_id, params, cql::Consistency::One);
+    println!("Result: {} \n", res);
 
-    let mut res;
-    res = client.query(~"create keyspace rust with replication = \
-        {'class': 'SimpleStrategy', 'replication_factor':1}", cql_client::ConsistencyOne);
-    io::println(fmt!("%?", res));
+    q = "select * from rust.test";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
 
-    res = client.query(~"create table rust.test (id text primary key, value float)",
-         cql_client::ConsistencyOne);
-    io::println(fmt!("%?", res));
+    q = "create table rust.test2 (id text primary key, l list<int>, m map<int, text>, s set<float>)";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
 
-    res = client.query(~"insert into rust.test (id, value) values ('asdf', 1.2345)",
-         cql_client::ConsistencyOne);
-    io::println(fmt!("%?", res));
+    q = "insert into rust.test2 (id, l, m, s) values ('asdf', [1,2,3,4,5], {0: 'aa', 1: 'bbb', 3: 'cccc'}, {1.234, 2.345, 3.456, 4.567})";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
 
-    res = client.query(~"select * from rust.test",
-         cql_client::ConsistencyOne);
-    io::println(fmt!("%?", res));
+    q = "select * from rust.test2";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
 }
