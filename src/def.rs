@@ -262,7 +262,7 @@ pub struct CqlRequest<'a> {
 pub enum CqlRequestBody<'a> {
     RequestStartup(CqlStringMap),
     RequestCred(&'a Vec<SendStr>),
-    RequestQuery(SendStr, Consistency::Consistency, u8),
+    RequestQuery(&'a str, Consistency::Consistency, u8),
     RequestPrepare(&'a str),
     RequestExec(&'a CqlPreparedStat, &'a [CqlValue], Consistency::Consistency, u8),
     RequestOptions,
