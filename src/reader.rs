@@ -5,6 +5,7 @@ use super::def::*;
 use std::str::SendStr;
 use self::uuid::Uuid;
 use std::io::net::ip::IpAddr;
+use std::str::Owned;
 
 macro_rules! read_and_check_io_length(
     ($reader: expr, $method: ident, $arg: expr, $msg: expr) => {
@@ -82,7 +83,7 @@ impl<T: std::io::Reader> CqlReader for T {
         let len = read_and_check_io_length!(self, read_cql_bytes_length, val_type, "Error reading string length");
         let vec_u8 = read_and_check_io_error!(self, read_exact, len as uint, "Error reading string data");
         match String::from_utf8(vec_u8) {
-            Ok(s) => Ok(Some(s.into_maybe_owned())),
+            Ok(s) => Ok(Some(Owned(s))),
             Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", ReadError))
         }     
     }
@@ -203,8 +204,8 @@ impl<T: std::io::Reader> CqlReader for T {
         let flags = read_and_check_io_error!(self, read_be_u32, "Error reading flags");
         let column_count = read_and_check_io_error!(self, read_be_u32, "Error reading column count");
 
-        let (keyspace, table) =
-            if flags == 0x0001 {
+        let (ks, tb) =
+            if flags & 0x0001 != 0 {
                 let keyspace_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading keyspace name").expect("Unknown error");
                 let table_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading table name").expect("Unknown error");
                 (keyspace_str, table_str)
@@ -215,8 +216,8 @@ impl<T: std::io::Reader> CqlReader for T {
         let mut row_metadata:Vec<CqlColMetadata> = vec![];
         for _ in range(0u32, column_count) {
             let (keyspace, table) =
-                if flags == 0x0001 {
-                    sendstr_tuple_void!()
+                if flags & 0x0001 != 0 {
+                    (ks.clone(), tb.clone())
                 } else {
                     let keyspace_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading keyspace name").expect("Unknown error");
                     let table_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading table name").expect("Unknown error");
@@ -252,8 +253,8 @@ impl<T: std::io::Reader> CqlReader for T {
         Ok(box CqlMetadata {
             flags: flags,
             column_count: column_count,
-            keyspace: keyspace,
-            table: table,
+            keyspace: ks,
+            table: tb,
             row_metadata: row_metadata,
         })
     }
