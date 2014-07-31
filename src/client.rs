@@ -68,7 +68,7 @@ impl CqlClient {
 
         let ref mut socket = self.socket;
         serialize_and_check_io_error!(socket, q, self.version, "Error serializing query");
-        let res = read_and_check_io_error!(socket, read_cql_response, "Error reading query");
+        let res = read_and_check_io_error!(socket, read_cql_response, self.version, "Error reading query");
         Ok(res)
     }
 
@@ -101,7 +101,7 @@ impl CqlClient {
         
         */
 
-        Ok(read_and_check_io_error!(self.socket, read_cql_response, "Error reading prepared statement execution result"))
+        Ok(read_and_check_io_error!(self.socket, read_cql_response, self.version, "Error reading prepared statement execution result"))
     }
 
     pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<()> {
@@ -116,7 +116,7 @@ impl CqlClient {
 
         serialize_and_check_io_error!(&mut self.socket, q, self.version, "Error serializing prepared statement");
 
-        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, "Error reading query");
+        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, self.version, "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
                 self.prepared.insert(String::from_str(query_id), preps);
@@ -145,7 +145,7 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
         let msg_startup = build_startup(version);
         serialize_and_check_error!(socket, msg_startup, version, "Error serializing startup message");
 
-        let response = read_and_check_io_error!(socket, read_cql_response, "Error reding response");
+        let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding response");
         match response.body {
             ResponseReady =>  Ok(()),
             ResponseAuth(_) => {
@@ -160,7 +160,7 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
                         };
                         serialize_and_check_error!(socket, msg_auth, version, "Error serializing request (auth)");
                     
-                        let response = read_and_check_io_error!(socket, read_cql_response, "Error reding authenticaton response");
+                        let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding authenticaton response");
                         match response.body {
                             ResponseReady => Ok(()),
                             ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
