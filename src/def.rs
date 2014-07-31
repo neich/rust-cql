@@ -134,7 +134,8 @@ pub enum RCErrorType {
     WriteError,
     SerializeError,
     ConnectionError,
-    NoDataError
+    NoDataError,
+    GenericError
 }
 
 #[deriving(Show)]
@@ -262,8 +263,8 @@ pub enum CqlRequestBody<'a> {
     RequestStartup(CqlStringMap),
     RequestCred(&'a Vec<SendStr>),
     RequestQuery(SendStr, Consistency::Consistency, u8),
-    RequestPrepare(SendStr),
-    RequestExec(&'a CqlPreparedStat, Vec<CqlValue>, Consistency::Consistency, u8),
+    RequestPrepare(&'a str),
+    RequestExec(&'a CqlPreparedStat, &'a [CqlValue], Consistency::Consistency, u8),
     RequestOptions,
 }
 
