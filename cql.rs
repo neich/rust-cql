@@ -1,6 +1,8 @@
 extern crate std;
 extern crate cql;
 
+use std::str::Slice;
+
 fn main() {
     println!("Connecting ...!");
     let mut client = match cql::connect("127.0.0.1", 9042, None) {
@@ -39,7 +41,7 @@ fn main() {
     }
 
     println!("Execute prepared");
-    let params: &[cql::CqlValue] = &[cql::CqlVarchar(Some("ttrwe".into_maybe_owned())), cql::CqlFloat(Some(15.1617))];
+    let params: &[cql::CqlValue] = &[cql::CqlVarchar(Some(Slice("ttrwe"))), cql::CqlFloat(Some(15.1617))];
     res = client.exec_prepared("test", params, cql::Consistency::One);
     println!("Result: {} \n", res);
 
