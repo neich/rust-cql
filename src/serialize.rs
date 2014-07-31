@@ -122,7 +122,10 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
     fn len(&'a self, version: u8) -> uint {
         8 + match self.body {
             RequestStartup(ref map) => map.len(version),
-            RequestQuery(ref query_str, _, _) => 4 + query_str.len() + 3,
+            RequestQuery(ref query_str, _, _) => {
+                let final_bytes = if version >= 2 { 3 } else { 2 };
+                4 + query_str.len() + final_bytes
+            },
             RequestPrepare(ref query_str) => 4 + query_str.len(),
             RequestExec(ref ps, ref values, _, _) => {
                 let final_bytes = if version >= 2 { 3 } else { 2 };
