@@ -55,7 +55,7 @@ pub trait CqlReader {
     fn read_cql_map(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLMap>>;
 
     fn read_cql_metadata(&mut self) -> RCResult<Box<CqlMetadata>>;
-    fn read_cql_response(&mut self) -> RCResult<CqlResponse>;
+    fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse>;
     fn read_cql_rows(&mut self) -> RCResult<Box<CqlRows>>;
 
     fn read_cql_skip(&mut self, val_type: CqlBytesSize) -> RCResult<()>;
@@ -354,10 +354,10 @@ impl<T: std::io::Reader> CqlReader for T {
         })
     }
 
-    fn read_cql_response(&mut self) -> RCResult<CqlResponse> {
+    fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse> {
         let header_data = read_and_check_io_error!(self, read_exact, 4, "Error reading response header");
 
-        let version = *header_data.get(0);
+        let version_header = *header_data.get(0);
         let flags = *header_data.get(1);
         let stream = *header_data.get(2) as i8;
         let opcode = opcode_response(*header_data.get(3));
@@ -437,7 +437,7 @@ impl<T: std::io::Reader> CqlReader for T {
         };
 
         Ok(CqlResponse {
-            version: version,
+            version: version_header,
             flags: flags,
             stream: stream,
             opcode: opcode,
