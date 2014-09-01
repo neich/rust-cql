@@ -74,7 +74,7 @@ impl CqlClient {
 
     pub fn exec_prepared(&mut self, ps_id: &str, params: &[CqlValue], con: Consistency::Consistency) -> RCResult<CqlResponse> {
         let preps = match self.prepared.find(&String::from_str(ps_id)) {
-            Some(ps) => ps,
+            Some(ps) => &**ps,
             None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
         };
 
@@ -83,7 +83,7 @@ impl CqlClient {
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeExecute,
-            body: RequestExec(*preps, params, con, 0x01),
+            body: RequestExec(preps, params, con, 0x01),
         };
 
         serialize_and_check_io_error!(&mut self.socket, q, self.version, "Error serializing prepared statement execution");
@@ -128,51 +128,47 @@ impl CqlClient {
 }
 
 
-fn build_startup(version: u8) -> CqlRequest {
+fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec<SendStr>>) -> RCResult<()> {
     let body = CqlStringMap {
         pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(version-1) as uint]}],
     };
-    return CqlRequest {
+    let msg_startup = CqlRequest {
         version: version,
         flags: 0x00,
         stream: 0x01,
         opcode: OpcodeStartup,
         body: RequestStartup(body),
     };
-}
+    serialize_and_check_error!(socket, msg_startup, version, "Error serializing startup message");
 
-fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec<SendStr>>) -> RCResult<()> {
-        let msg_startup = build_startup(version);
-        serialize_and_check_error!(socket, msg_startup, version, "Error serializing startup message");
-
-        let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding response");
-        match response.body {
-            ResponseReady =>  Ok(()),
-            ResponseAuth(_) => {
-                match creds {
-                    Some(cred) => {
-                        let msg_auth = CqlRequest {
-                            version: version,
-                            flags: 0x00,
-                            stream: 0x01,
-                            opcode: OpcodeOptions,
-                            body: RequestCred(cred),
-                        };
-                        serialize_and_check_error!(socket, msg_auth, version, "Error serializing request (auth)");
+    let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding response");
+    match response.body {
+        ResponseReady =>  Ok(()),
+        ResponseAuth(_) => {
+            match creds {
+                Some(cred) => {
+                    let msg_auth = CqlRequest {
+                        version: version,
+                        flags: 0x00,
+                        stream: 0x01,
+                        opcode: OpcodeOptions,
+                        body: RequestCred(cred),
+                    };
+                    serialize_and_check_error!(socket, msg_auth, version, "Error serializing request (auth)");
                     
-                        let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding authenticaton response");
-                        match response.body {
-                            ResponseReady => Ok(()),
-                            ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
-                            _ => Err(RCError::new("Server returned unknown message", ReadError))
-                        }
-                    },
-                    None => Err(RCError::new("Credential should be provided for authentication", ReadError))
-                }
-            },
-            ResponseError(_, ref msg) => Err(RCError::new(format!("Error connecting: {}", msg), ReadError)),
-            _ => Err(RCError::new("Wrong response to startup", ReadError))
-        }
+                    let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding authenticaton response");
+                    match response.body {
+                        ResponseReady => Ok(()),
+                        ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
+                        _ => Err(RCError::new("Server returned unknown message", ReadError))
+                    }
+                },
+                None => Err(RCError::new("Credential should be provided for authentication", ReadError))
+            }
+        },
+        ResponseError(_, ref msg) => Err(RCError::new(format!("Error connecting: {}", msg), ReadError)),
+        _ => Err(RCError::new("Wrong response to startup", ReadError))
+    }
 }
 
 pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCResult<CqlClient> {
