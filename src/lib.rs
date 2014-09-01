@@ -1,4 +1,4 @@
-#![crate_id = "cql#0.1"]
+#![crate_name = "cql"]
 #![comment = "A Rust CQl binary protocol implementation"]
 #![license = "MIT/ASL2"]
 #![crate_type = "rlib"]
