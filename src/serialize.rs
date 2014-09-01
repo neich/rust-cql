@@ -1,6 +1,8 @@
 extern crate std;
 
 use super::def::*;
+use super::client::Client;
+
 use std::path::BytesContainer;
 use std::iter::AdditiveIterator;
 use std::io::net::ip::Ipv4Addr;
@@ -10,6 +12,9 @@ pub trait CqlSerializable<'a> {
     fn len(&'a self, version: u8) -> uint;
     fn serialize_size<T: std::io::Writer>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()>;
     fn serialize<T: std::io::Writer>(&'a self, buf: &mut T, version: u8) -> RCResult<()>;
+    fn serialize_with_client<T: std::io::Writer>(&'a self, buf: &mut T, cl: &Client) -> RCResult<()> {
+        self.serialize(buf, cl.version)
+    }
 }
 
 macro_rules! write_size(
