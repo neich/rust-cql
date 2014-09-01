@@ -7,7 +7,7 @@ extern crate uuid;
 use std::str::SendStr;
 
 use super::def::*;
-use super::serialize::*;
+use super::serialize::CqlSerializable;
 use super::reader::*;
 use std::collections::TreeMap;
 
