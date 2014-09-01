@@ -1,7 +1,7 @@
 MAIN   = cql.rs
 CRATES = src/lib.rs
 
-TO_LIB = $(addprefix lib/, $(shell rustc --crate-file-name $(1)))
+TO_LIB = $(addprefix lib/, $(shell rustc --print-file-name $(1)))
 
 LIBS   = $(foreach crate, $(CRATES), $(call TO_LIB, $(crate)))
 
