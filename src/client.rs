@@ -25,17 +25,17 @@ macro_rules! serialize_and_check_io_error(
 
 type PrepsStore = TreeMap<String, Box<CqlPreparedStat>>;
 
-pub struct CqlClient {
+pub struct Client {
     socket: std::io::net::tcp::TcpStream,
     pub version: u8,
     prepared: PrepsStore
 }
 
 
-impl CqlClient {
+impl Client {
 
-    fn new(socket: std::io::net::tcp::TcpStream, version: u8) -> CqlClient {
-        CqlClient {socket: socket, version: version, prepared: TreeMap::new()}
+    fn new(socket: std::io::net::tcp::TcpStream, version: u8) -> Client {
+        Client {socket: socket, version: version, prepared: TreeMap::new()}
     }
 
     fn build_auth<'a>(&self, creds: &'a Vec<SendStr>, stream: i8) -> CqlRequest<'a> {
@@ -171,7 +171,7 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
     }
 }
 
-pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCResult<CqlClient> {
+pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCResult<Client> {
 
     let mut version = CQL_MAX_SUPPORTED_VERSION;
 
@@ -184,7 +184,7 @@ pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCRe
         let mut socket = res.unwrap();
 
         match send_startup(& mut socket, version, creds) {
-            Ok(_) => return Ok(CqlClient::new(socket, version)),
+            Ok(_) => return Ok(Client::new(socket, version)),
             Err(e) => println!("Error connecting with protocol version v{}: {}", version, e.desc)
         }
         version -= 1;
