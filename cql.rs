@@ -1,4 +1,3 @@
-extern crate std;
 extern crate cql;
 
 use std::str::Slice;
