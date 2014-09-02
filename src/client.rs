@@ -15,8 +15,8 @@ pub static CQL_VERSION_STRINGS:  [&'static str, .. 3] = ["3.0.0", "3.0.0", "3.0.
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
 macro_rules! serialize_and_check_io_error(
-    ($writer: expr, $obj: ident, $version: expr, $msg: expr) => {
-        match $obj.serialize($writer, $version) {
+    ($method: ident, $writer: expr, $obj: ident, $arg: ident, $msg: expr) => {
+        match $obj.$method($writer, $arg) {
             Err(e) => return Err(RCError { kind: SerializeError, desc: format!("{} -> {}", $msg, e.desc).into_maybe_owned()}),
             _ => ()
         }
@@ -58,6 +58,13 @@ impl Client {
         };
     }
 
+    pub fn get_prepared_statement(&mut self, ps_id: &str) -> RCResult<&CqlPreparedStat> {
+        match self.prepared.find(&String::from_str(ps_id)) {
+            Some(ps) => Ok(&**ps),
+            None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
+        }
+    }
+
     pub fn exec_query(&mut self, query_str: &str, con: Consistency::Consistency) -> RCResult<CqlResponse> {
         let q = CqlRequest {
             version: self.version,
@@ -66,27 +73,24 @@ impl Client {
             opcode: OpcodeQuery,
             body: RequestQuery(query_str, con, 0)};
 
-        let ref mut socket = self.socket;
-        serialize_and_check_io_error!(socket, q, self.version, "Error serializing query");
-        let res = read_and_check_io_error!(socket, read_cql_response, self.version, "Error reading query");
+        let mut socket = self.socket.clone();
+        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing query");
+        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, self.version, "Error reading query");
         Ok(res)
     }
 
-    pub fn exec_prepared(&mut self, ps_id: &str, params: &[CqlValue], con: Consistency::Consistency) -> RCResult<CqlResponse> {
-        let preps = match self.prepared.find(&String::from_str(ps_id)) {
-            Some(ps) => &**ps,
-            None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
-        };
+    pub fn exec_prepared(&mut self, ps_id: SendStr, params: &[CqlValue], con: Consistency::Consistency) -> RCResult<CqlResponse> {
 
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeExecute,
-            body: RequestExec(preps, params, con, 0x01),
+            body: RequestExec(ps_id, params, con, 0x01),
         };
 
-        serialize_and_check_io_error!(&mut self.socket, q, self.version, "Error serializing prepared statement execution");
+        let mut socket = self.socket.clone();
+        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing prepared statement execution");
 
         /* Code to debug prepared statements. Write to file the serialization of the request
 
@@ -101,7 +105,7 @@ impl Client {
         
         */
 
-        Ok(read_and_check_io_error!(self.socket, read_cql_response, self.version, "Error reading prepared statement execution result"))
+        Ok(read_and_check_io_error!(socket, read_cql_response, self.version, "Error reading prepared statement execution result"))
     }
 
     pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<()> {
@@ -113,10 +117,10 @@ impl Client {
             body: RequestPrepare(query_str),
         };
 
+        let mut socket = self.socket.clone();
+        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing prepared statement");
 
-        serialize_and_check_io_error!(&mut self.socket, q, self.version, "Error serializing prepared statement");
-
-        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, self.version, "Error reading query");
+        let res = read_and_check_io_error!(&mut socket, read_cql_response, self.version, "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
                 self.prepared.insert(String::from_str(query_id), preps);
@@ -139,7 +143,7 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
         opcode: OpcodeStartup,
         body: RequestStartup(body),
     };
-    serialize_and_check_error!(socket, msg_startup, version, "Error serializing startup message");
+    serialize_and_check_io_error!(serialize, socket, msg_startup, version, "Error serializing startup message");
 
     let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding response");
     match response.body {
@@ -154,7 +158,7 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
                         opcode: OpcodeOptions,
                         body: RequestCred(cred),
                     };
-                    serialize_and_check_error!(socket, msg_auth, version, "Error serializing request (auth)");
+                    serialize_and_check_io_error!(serialize, socket, msg_auth, version, "Error serializing request (auth)");
                     
                     let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding authenticaton response");
                     match response.body {
