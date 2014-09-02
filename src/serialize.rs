@@ -68,24 +68,25 @@ impl<'a> CqlSerializable<'a> for CqlStringMap {
 }
 
 impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
-    fn serialize_size<T: std::io::Writer>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
-        write_and_check_io_error!(buf, write_u8, self.version, "Error serializing CqlRequest (version)");
+        fn serialize_with_client<T: std::io::Writer>(&'a self, buf: &mut T, cl: &Client) -> RCResult<()> {
+
+        write_and_check_io_error!(buf, write_u8, cl.version, "Error serializing CqlRequest (version)");
         write_and_check_io_error!(buf, write_u8, self.flags, "Error serializing CqlRequest (flags)");
         write_and_check_io_error!(buf, write_i8, self.stream, "Error serializing CqlRequest (stream)");
         write_and_check_io_error!(buf, write_u8, self.opcode as u8, "Error serializing CqlRequest (opcode)");
-        let len = (self.len(version)-8) as u32;
+        let len = (self.len(cl.version)-8) as u32;
         write_and_check_io_error!(buf, write_be_u32, len, "Error serializing CqlRequest (length)");
 
         match self.body {
             RequestStartup(ref map) => {
-                map.serialize(buf, version)
+                map.serialize(buf, cl.version)
             },
             RequestQuery(ref query_str, ref consistency, flags) => {
                 let len_str = query_str.len() as u32;
                 write_and_check_io_error!(buf, write_be_u32, len_str, "Error serializing CqlRequest (query length)");
                 write_and_check_io_error!(buf, write_str, query_str.as_slice(), "Error serializing CqlRequest (query)");
                 write_and_check_io_error!(buf, write_be_u16, *consistency as u16, "Error serializing CqlRequest (query consistency)");
-                if version >= 2 {
+                if cl.version >= 2 {
                     write_and_check_io_error!(buf, write_u8, flags, "Error serializing CqlRequest (query flags)");
                 }
                 Ok(())
@@ -99,18 +100,18 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
             RequestExec(ref preps, ref params, cons, flags) => {
                 write_and_check_io_error!(buf, write_be_i16, preps.id.len() as i16, "Error serializing EXEC request (id length)");
                 write_and_check_io_error!(buf, write, preps.id.as_slice(), "Error serializing EXEC request (id)");
-                if version >= 2 {
+                if cl.version >= 2 {
                     write_and_check_io_error!(buf, write_be_u16, cons as u16, "Error serializing CqlRequest (query consistency)");
                     write_and_check_io_error!(buf, write_u8, flags, "Error serializing CqlRequest (query flags)");
 
                     write_and_check_io_error!(buf, write_be_i16, params.len() as i16, "Error serializing EXEC request (params length)");                
                     for v in params.iter() {
-                        v.serialize_size(buf, Cqli32, version);
+                        v.serialize_size(buf, Cqli32, cl.version);
                     }
                 } else {
                     write_and_check_io_error!(buf, write_be_i16, params.len() as i16, "Error serializing EXEC request (params length)");                
                     for v in params.iter() {
-                        v.serialize_size(buf, Cqli32, version);
+                        v.serialize_size(buf, Cqli32, cl.version);
                     }
                     write_and_check_io_error!(buf, write_be_u16, cons as u16, "Error serializing CqlRequest (query consistency)");
                 }
@@ -120,8 +121,12 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
         }
     }
 
+    fn serialize_size<T: std::io::Writer>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+        Err(RCError::new("Cannot serialize REquest without Client context", WriteError))
+    }
+
     fn serialize<T: std::io::Writer>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
-        self.serialize_size(buf, Cqli32, version)
+        Err(RCError::new("Cannot serialize REquest without Client context", WriteError))
     }
 
     fn len(&'a self, version: u8) -> uint {
