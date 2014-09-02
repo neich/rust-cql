@@ -15,6 +15,7 @@ pub enum OpcodeRequest {
     OpcodePrepare = 0x09,
     OpcodeExecute = 0x0A,
     OpcodeRegister = 0x0B,
+    OpcodeBatch = 0x0D
 }
 
 #[deriving(Show)]
@@ -265,6 +266,7 @@ pub enum CqlRequestBody<'a> {
     RequestQuery(&'a str, Consistency::Consistency, u8),
     RequestPrepare(&'a str),
     RequestExec(SendStr, &'a [CqlValue], Consistency::Consistency, u8),
+    RequestBatch(Vec<request::Request>, Consistency::Consistency, u8),
     RequestOptions,
 }
 
@@ -300,6 +302,17 @@ pub struct CqlPreparedStat {
     pub meta_result: Option<Box<CqlMetadata>>
 }
 
+
+pub mod request {
+    use std::str::SendStr;
+    use super::*;
+
+    pub enum Request {
+        Query(SendStr, Consistency::Consistency),
+        Execute(SendStr, Vec<CqlValue>),
+        Batch(Vec<Request>)
+    }
+}
 
 
 

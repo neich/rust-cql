@@ -10,6 +10,7 @@ use super::def::*;
 use super::serialize::CqlSerializable;
 use super::reader::*;
 use std::collections::TreeMap;
+use super::def::request::*;
 
 pub static CQL_VERSION_STRINGS:  [&'static str, .. 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
@@ -107,6 +108,21 @@ impl Client {
 
         Ok(read_and_check_io_error!(socket, read_cql_response, self.version, "Error reading prepared statement execution result"))
     }
+
+    pub fn exec_batch(&mut self, q_vec: Vec<Request>, con: Consistency::Consistency) -> RCResult<CqlResponse> {
+        let q = CqlRequest {
+            version: self.version,
+            flags: 0x00,
+            stream: 0x01,
+            opcode: OpcodeBatch,
+            body: RequestBatch(q_vec, con, 0)};
+
+        let mut socket = self.socket.clone();
+        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing BATCH request");
+        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, self.version, "Error reading query");
+        Ok(res)
+    }
+
 
     pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<()> {
         let q = CqlRequest {
