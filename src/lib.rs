@@ -67,16 +67,6 @@ macro_rules! read_and_check_io_option(
     }
 )
 
-macro_rules! serialize_and_check_error(
-    ($writer: expr, $obj: ident, $version: expr, $msg: expr) => {
-        match $obj.serialize($writer, $version) {
-            Ok(_) => (),
-            Err(e) => return Err(RCError { kind: SerializeError, desc: format!("{} -> {}", $msg, e.desc).into_maybe_owned()})
-        }
-    }
-)
-
-
 macro_rules! sendstr_tuple_void(
     () => {
         ("".into_maybe_owned(), "".into_maybe_owned())
