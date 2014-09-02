@@ -264,7 +264,7 @@ pub enum CqlRequestBody<'a> {
     RequestCred(&'a Vec<SendStr>),
     RequestQuery(&'a str, Consistency::Consistency, u8),
     RequestPrepare(&'a str),
-    RequestExec(&'a CqlPreparedStat, &'a [CqlValue], Consistency::Consistency, u8),
+    RequestExec(SendStr, &'a [CqlValue], Consistency::Consistency, u8),
     RequestOptions,
 }
 
