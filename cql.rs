@@ -41,7 +41,7 @@ fn main() {
 
     println!("Execute prepared");
     let params: &[cql::CqlValue] = &[cql::CqlVarchar(Some(Slice("ttrwe"))), cql::CqlFloat(Some(15.1617))];
-    res = client.exec_prepared("test", params, cql::Consistency::One);
+    res = client.exec_prepared("test".into_maybe_owned(), params, cql::Consistency::One);
     println!("Result: {} \n", res);
 
     q = "select * from rust.test";
