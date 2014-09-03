@@ -20,5 +20,6 @@ What works:
 What doesn't work:
 - Decimal and Varint types
 - Authentication
+- ... a lot of things
 
 **Disclaimer**: this software is in alpha state, so expect bugs and rust anti-patterns (this is my first code in rust). 
