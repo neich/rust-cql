@@ -77,6 +77,14 @@ pub mod Consistency {
     }
 }
 
+pub mod BatchType {
+    pub enum BatchType {
+        Logged = 0x00,
+        Unlogged = 0x01,
+        Counter = 0x02
+    }
+}
+
 #[deriving(Show)]
 pub enum CqlValueType {
     ColumnCustom = 0x0000,
@@ -266,7 +274,7 @@ pub enum CqlRequestBody<'a> {
     RequestQuery(&'a str, Consistency::Consistency, u8),
     RequestPrepare(&'a str),
     RequestExec(SendStr, &'a [CqlValue], Consistency::Consistency, u8),
-    RequestBatch(Vec<request::Request>, Consistency::Consistency, u8),
+    RequestBatch(Vec<Query>, BatchType::BatchType, Consistency::Consistency, u8),
     RequestOptions,
 }
 
@@ -303,16 +311,12 @@ pub struct CqlPreparedStat {
 }
 
 
-pub mod request {
-    use std::str::SendStr;
-    use super::*;
-
-    pub enum Request {
-        Query(SendStr, Consistency::Consistency),
-        Execute(SendStr, Vec<CqlValue>),
-        Batch(Vec<Request>)
-    }
+pub enum Query {
+    QueryStr(SendStr),
+    QueryPrepared(SendStr, Vec<CqlValue>),
+    QueryBatch(Vec<Query>)
 }
+
 
 
 

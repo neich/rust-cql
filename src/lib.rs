@@ -11,12 +11,15 @@
 
 pub use client::connect;
 pub use def::Consistency;
+pub use def::BatchType;
 pub use def::CqlValue;
 pub use def::CqlFloat;
 pub use def::CqlVarchar;
 pub use def::CQLList;
 pub use def::CQLMap;
 pub use def::CQLSet;
+pub use def::QueryStr;
+pub use def::QueryPrepared;
 
 #[macro_export]
 macro_rules! read_and_check_io_error(

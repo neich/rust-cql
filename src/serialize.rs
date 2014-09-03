@@ -109,6 +109,17 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 }
                 Ok(())
             },
+            RequestBatch(ref q_vec, r_type, con, flags) => {
+                let len = (self.len_with_client(cl)-8) as u32;
+                serialize_header(buf, cl.version, self.flags, self.stream, self.opcode as u8, len);
+                let version = self.version;
+
+                write_and_check_io_error!(buf, write_u8, r_type as u8, "Error serializing BATCH request (request type)");
+                write_and_check_io_error!(buf, write_be_u16, q_vec.len() as u16, "Error serializing BATCH request (number of requests)");
+                q_vec.iter().all(|r| { r.serialize_with_client(buf, cl); true });
+                write_and_check_io_error!(buf, write_be_u16, con as u16, "Error serializing BATCH request (consistency)");
+                Ok(())
+            }
             _ => self.serialize(buf, cl.version)
         }
     }
@@ -164,6 +175,9 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 let final_bytes = if version >= 2 { 3 } else { 2 };
                 8 + 2 + preps.id.as_slice().len() + 2 + values.iter().map(|e| 4 + e.len(version)).sum() + final_bytes
             },
+            RequestBatch(ref q_vec, r_type, con, flags) => {
+                8 + 3 + q_vec.iter().map(|q| q.len_with_client(cl)).sum() + 2
+            }
             _ => self.len(cl.version)
         }
     }
@@ -176,8 +190,70 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 4 + query_str.len() + final_bytes
             },
             RequestPrepare(ref query_str) => 4 + query_str.len(),
-            RequestExec(_, _, _, _) => {
-                0
+            _ => 0
+        }
+    }
+}
+
+impl<'a> CqlSerializable<'a> for Query {
+    fn serialize_size<T: std::io::Writer>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+        self.serialize(buf, version)
+    }
+
+    fn serialize<T: std::io::Writer>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
+        match *self {
+            QueryStr(ref q_str) => {
+                write_and_check_io_error!(buf, write_u8, 0u8, "Error serializing BATCH query (type)");
+                write_size!(buf, q_str.len(), Cqli32);
+                write_and_check_io_error!(buf, write, q_str.container_as_bytes(), "Error serializing BATCH query (query string)");
+                write_and_check_io_error!(buf, write_be_u16, 0u16, "Error serializing BATCH query (values length)");
+                Ok(())
+            },
+            _ => Err(RCError::new("Cannot serialize query in BATH request", WriteError))
+        }
+    }
+
+    fn serialize_with_client<T: std::io::Writer>(&'a self, buf: &mut T, cl: &mut Client) -> RCResult<()> {
+        match *self {
+            QueryPrepared(ref p_name, ref values) => {
+                let version = cl.version;
+                let preps = match cl.get_prepared_statement(p_name.as_slice()) {
+                    Ok(ps) => ps,
+                    Err(_) => return Err(RCError::new(format!("Unknown prepared statement <{}>", p_name), GenericError))
+                };
+
+                write_and_check_io_error!(buf, write_u8, 1u8, "Error serializing BATCH prepared query (type)");
+                write_size!(buf, preps.id.len(), Cqli16);
+                write_and_check_io_error!(buf, write, preps.id.as_slice(), "Error serializing BATCH prepared query (id)");
+                write_and_check_io_error!(buf, write_be_u16, values.len() as u16, "Error serializing BATCH prepared query (values length)");
+                values.iter().all(|v| { v.serialize(buf, version); true});
+
+                Ok(())
+            },
+            _ => self.serialize(buf, cl.version)
+
+        }
+    }
+
+    fn len_with_client(&'a self, cl: &mut Client) -> uint {
+        match *self {
+            QueryPrepared(ref p_name, ref values) => {
+                let version = cl.version;
+                let preps = match cl.get_prepared_statement(p_name.as_slice()) {
+                    Ok(ps) => ps,
+                    Err(_) => return 0
+                };
+
+                5 + preps.id.len() + values.iter().map(|e| 4 + e.len(version)).sum()
+        },
+        _ => self.len(cl.version)
+        }
+    }
+
+    fn len(&'a self, version: u8) -> uint {
+        match *self {
+            QueryStr(ref q_str) => {
+                7 + q_str.len()
             },
             _ => 0
         }
@@ -467,3 +543,4 @@ impl<'a, T:CqlSerializable<'a>, V:CqlSerializable<'a>> CqlSerializable<'a> for P
         0
     }
 }
+
