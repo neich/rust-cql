@@ -49,6 +49,18 @@ fn main() {
     res = client.exec_query(q, cql::Consistency::One);
     println!("Result: {} \n", res);
 
+    println!("Execute batch");
+    let params2: Vec<cql::CqlValue> = vec![cql::CqlVarchar(Some(Slice("batch2"))), cql::CqlFloat(Some(666.65))];
+    let q_vec = vec![cql::QueryStr(Slice("insert into rust.test (id, f32) values ('batch1', 34.56)")),
+                     cql::QueryPrepared(Slice("test"), params2)];
+    res = client.exec_batch(cql::BatchType::Logged, q_vec, cql::Consistency::One);
+    println!("Result: {} \n", res);
+
+    q = "select * from rust.test";
+    println!("Query: {}", q);
+    res = client.exec_query(q, cql::Consistency::One);
+    println!("Result: {} \n", res);
+
     q = "create table rust.test2 (id text primary key, l list<int>, m map<int, text>, s set<float>)";
     println!("Query: {}", q);
     res = client.exec_query(q, cql::Consistency::One);
