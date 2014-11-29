@@ -2,6 +2,14 @@ extern crate uuid;
 extern crate std;
 
 use super::def::*;
+use super::def::CqlValue::*;
+use super::def::CqlValueType::*;
+use super::def::CqlResponseBody::*;
+use super::def::RCErrorType::*;
+use super::def::CqlBytesSize::*;
+use super::def::KindResult::*;
+use super::def::OpcodeResponse::*;
+
 use std::str::SendStr;
 use self::uuid::Uuid;
 use std::io::net::ip::IpAddr;
@@ -12,7 +20,7 @@ macro_rules! read_and_check_io_length(
         {
             let len = match $reader.$method($arg) {
                 Ok(val) => val,
-                Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), ReadError))
+                Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), RCErrorType::ReadError))
             };
             if len < 0 { 
                 return Ok(None);
@@ -25,7 +33,7 @@ macro_rules! read_and_check_io_length(
         {
             let len = match $reader.$method() {
                 Ok(val) => val,
-                Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), ReadError))
+                Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), RCErrorType::ReadError))
             };
             if len < 0 { 
                 return Ok(None);
@@ -68,8 +76,8 @@ pub trait CqlReader {
 impl<T: std::io::Reader> CqlReader for T {
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32> {
         match val_type {
-            Cqli32 => Ok(read_and_check_io_error!(self, read_be_i32, "Error reading bytes length")),
-            Cqli16 => Ok(read_and_check_io_error!(self, read_be_i16, "Error reading collection bytes length") as i32)
+            CqlBytesSize::Cqli32 => Ok(read_and_check_io_error!(self, read_be_i32, "Error reading bytes length")),
+            CqlBytesSize::Cqli16 => Ok(read_and_check_io_error!(self, read_be_i16, "Error reading collection bytes length") as i32)
         }       
     }
 
@@ -83,8 +91,8 @@ impl<T: std::io::Reader> CqlReader for T {
         let len = read_and_check_io_length!(self, read_cql_bytes_length, val_type, "Error reading string length");
         let vec_u8 = read_and_check_io_error!(self, read_exact, len as uint, "Error reading string data");
         match String::from_utf8(vec_u8) {
-            Ok(s) => Ok(Some(Owned(s))),
-            Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", ReadError))
+            Ok(s) => Ok(Some(s.into_cow())),
+            Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", RCErrorType::ReadError))
         }     
     }
 
@@ -138,7 +146,7 @@ impl<T: std::io::Reader> CqlReader for T {
         let vec_u8 = read_and_check_io_error!(self, read_exact, len as uint, "Error reading uuid data");
         match Uuid::from_bytes(vec_u8.as_slice()) {
             Some(u) => Ok(Some(u)),
-            None => Err(RCError::new("Invalid uuid", ReadError))
+            None => Err(RCError::new("Invalid uuid", RCErrorType::ReadError))
         }      
     }
 
@@ -147,16 +155,16 @@ impl<T: std::io::Reader> CqlReader for T {
         let len = read_and_check_io_length!(self, read_cql_bytes_length, val_type, "Error reading value length");
         let vec = read_and_check_io_error!(self, read_exact, len as uint, "Error reading value data");
         if len == 4 {
-            Ok(Some(std::io::net::ip::Ipv4Addr(*vec.get(0), *vec.get(1), *vec.get(2), *vec.get(3))))
+            Ok(Some(std::io::net::ip::Ipv4Addr(vec[0], vec[1], vec[2], vec[3])))
         } else {
-            Ok(Some(std::io::net::ip::Ipv6Addr(*vec.get(1) as u16 + ((*vec.get(0) as u16) << 8),
-                                          *vec.get(3) as u16 + ((*vec.get(2) as u16) << 8),
-                                          *vec.get(5) as u16 + ((*vec.get(4) as u16) << 8),
-                                          *vec.get(7) as u16 + ((*vec.get(6) as u16) << 8),
-                                          *vec.get(9) as u16 + ((*vec.get(8) as u16) << 8),
-                                          *vec.get(11) as u16 + ((*vec.get(10) as u16) << 8),
-                                          *vec.get(13) as u16 + ((*vec.get(12) as u16) << 8),
-                                          *vec.get(15) as u16 + ((*vec.get(14) as u16) << 8))))           
+            Ok(Some(std::io::net::ip::Ipv6Addr(vec[1] as u16 + ((vec[0] as u16) << 8),
+                                          vec[3] as u16 + ((vec[2] as u16) << 8),
+                                          vec[5] as u16 + ((vec[4] as u16) << 8),
+                                          vec[7] as u16 + ((vec[6] as u16) << 8),
+                                          vec[9] as u16 + ((vec[8] as u16) << 8),
+                                          vec[11] as u16 + ((vec[10] as u16) << 8),
+                                          vec[13] as u16 + ((vec[12] as u16) << 8),
+                                          vec[15] as u16 + ((vec[14] as u16) << 8))))        
         }
     }
 
@@ -206,8 +214,8 @@ impl<T: std::io::Reader> CqlReader for T {
 
         let (ks, tb) =
             if flags & 0x0001 != 0 {
-                let keyspace_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading keyspace name").expect("Unknown error");
-                let table_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading table name").expect("Unknown error");
+                let keyspace_str = read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading keyspace name").expect("Unknown error");
+                let table_str = read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading table name").expect("Unknown error");
                 (keyspace_str, table_str)
             } else {
                 sendstr_tuple_void!()
@@ -217,27 +225,27 @@ impl<T: std::io::Reader> CqlReader for T {
         for _ in range(0u32, column_count) {
             let (keyspace, table) =
                 if flags & 0x0001 != 0 {
-                    (ks.clone(), tb.clone())
+                    (ks.clone().into_cow(), tb.clone().into_cow())
                 } else {
-                    let keyspace_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading keyspace name").expect("Unknown error");
-                    let table_str = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading table name").expect("Unknown error");
+                    let keyspace_str = read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading keyspace name").expect("Unknown error");
+                    let table_str = read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading table name").expect("Unknown error");
                     (keyspace_str, table_str)
                 };
-            let col_name = read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading column name").expect("Unknown error");
+            let col_name = read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading column name").expect("Unknown error");
             let type_key = read_and_check_io_error!(self, read_be_u16, "Error reading type key");
             let type_aux1 =
                 if type_key >= 0x20 {
                     let ctype = read_and_check_io_error!(self, read_be_u16, "Error reading list/set/map type");
                     cql_column_type(ctype)
                 } else {
-                    ColumnUnknown
+                    CqlValueType::ColumnUnknown
                 };
             let type_aux2 =
                 if type_key == 0x21 {
                     let ctype = read_and_check_io_error!(self, read_be_u16, "Error reading map type value");
                     cql_column_type(ctype)
                 } else {
-                    ColumnUnknown
+                    CqlValueType::ColumnUnknown
                 };
 
             row_metadata.push(CqlColMetadata {
@@ -261,76 +269,76 @@ impl<T: std::io::Reader> CqlReader for T {
 
     fn read_cql_column_value(&mut self, col_meta: &CqlColMetadata) -> RCResult<CqlValue> {
         match col_meta.col_type {
-            ColumnASCII => Ok(CqlASCII(read_and_check_io_error!(self, read_cql_str, Cqli32, "Error reading column value (ASCII)"))),
-            ColumnVarChar => Ok(CqlVarchar(read_and_check_io_error!(self, read_cql_str, Cqli32, "Error reading column value (VarChar)"))),
-            ColumnText => Ok(CqlText(read_and_check_io_error!(self, read_cql_str, Cqli32, "Error reading column value (Text)"))),
+            ColumnASCII => Ok(CqlASCII(read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli32, "Error reading column value (ASCII)"))),
+            ColumnVarChar => Ok(CqlVarchar(read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli32, "Error reading column value (VarChar)"))),
+            ColumnText => Ok(CqlText(read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli32, "Error reading column value (Text)"))),
 
-            ColumnInt => Ok(CqlInt(read_and_check_io_error!(self, read_cql_i32, Cqli32, "Error reading column value (Int)"))),
-            ColumnBigInt => Ok(CqlBigInt(read_and_check_io_error!(self, read_cql_i64, Cqli32, "Error reading column value (BigInt)"))),
-            ColumnFloat => Ok(CqlFloat(read_and_check_io_error!(self, read_cql_f32, Cqli32, "Error reading column value (Float)"))),
-            ColumnDouble => Ok(CqlDouble(read_and_check_io_error!(self, read_cql_f64, Cqli32, "Error reading column value (Double)"))),
+            ColumnInt => Ok(CqlInt(read_and_check_io_error!(self, read_cql_i32, CqlBytesSize::Cqli32, "Error reading column value (Int)"))),
+            ColumnBigInt => Ok(CqlBigInt(read_and_check_io_error!(self, read_cql_i64, CqlBytesSize::Cqli32, "Error reading column value (BigInt)"))),
+            ColumnFloat => Ok(CqlFloat(read_and_check_io_error!(self, read_cql_f32, CqlBytesSize::Cqli32, "Error reading column value (Float)"))),
+            ColumnDouble => Ok(CqlDouble(read_and_check_io_error!(self, read_cql_f64, CqlBytesSize::Cqli32, "Error reading column value (Double)"))),
 
             ColumnList => { Ok(CqlList(read_and_check_io_error!(self, read_cql_list, col_meta, "Error reading column value (list)"))) },
             ColumnCustom => {
-                read_and_check_io_error!(self, read_cql_skip, Cqli32, "Error reading column value (custom)");
+                read_and_check_io_error!(self, read_cql_skip, CqlBytesSize::Cqli32, "Error reading column value (custom)");
                 println!("Custom parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnBlob => Ok(CqlBlob(read_and_check_io_error!(self, read_cql_blob, Cqli32, "Error reading column value (blob)"))),
-            ColumnBoolean => Ok(CqlBoolean(read_and_check_io_error!(self, read_cql_boolean, Cqli32, "Error reading column vaue (boolean)"))),
-            ColumnCounter => Ok(CqlCounter(read_and_check_io_error!(self, read_cql_i64, Cqli32, "Error reading column value (counter"))),
+            ColumnBlob => Ok(CqlBlob(read_and_check_io_error!(self, read_cql_blob, CqlBytesSize::Cqli32, "Error reading column value (blob)"))),
+            ColumnBoolean => Ok(CqlBoolean(read_and_check_io_error!(self, read_cql_boolean, CqlBytesSize::Cqli32, "Error reading column vaue (boolean)"))),
+            ColumnCounter => Ok(CqlCounter(read_and_check_io_error!(self, read_cql_i64, CqlBytesSize::Cqli32, "Error reading column value (counter"))),
             ColumnDecimal => {
-                read_and_check_io_error!(self, read_cql_skip, Cqli32, "Error reading column value (decimal)");
+                read_and_check_io_error!(self, read_cql_skip, CqlBytesSize::Cqli32, "Error reading column value (decimal)");
                 println!("Decimal parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnTimestamp => Ok(CqlTimestamp(read_and_check_io_error!(self, read_cql_u64, Cqli32, "Error reading column value (timestamp)"))),
-            ColumnUuid => Ok(CqlUuid(read_and_check_io_error!(self, read_cql_uuid, Cqli32, "Error reading column value (uuid)"))),
+            ColumnTimestamp => Ok(CqlTimestamp(read_and_check_io_error!(self, read_cql_u64, CqlBytesSize::Cqli32, "Error reading column value (timestamp)"))),
+            ColumnUuid => Ok(CqlUuid(read_and_check_io_error!(self, read_cql_uuid, CqlBytesSize::Cqli32, "Error reading column value (uuid)"))),
             ColumnVarint => {
-                read_and_check_io_error!(self, read_cql_skip, Cqli32, "Error reading column value (varint)");
+                read_and_check_io_error!(self, read_cql_skip, CqlBytesSize::Cqli32, "Error reading column value (varint)");
                 println!("Varint parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnTimeUuid => Ok(CqlTimeUuid(read_and_check_io_error!(self, read_cql_uuid, Cqli32, "Error reading column value (timeuuid)"))),
-            ColumnInet => Ok(CqlInet(read_and_check_io_error!(self, read_cql_inet, Cqli32, "Error reading column value (inet)"))),
+            ColumnTimeUuid => Ok(CqlTimeUuid(read_and_check_io_error!(self, read_cql_uuid, CqlBytesSize::Cqli32, "Error reading column value (timeuuid)"))),
+            ColumnInet => Ok(CqlInet(read_and_check_io_error!(self, read_cql_inet, CqlBytesSize::Cqli32, "Error reading column value (inet)"))),
             ColumnMap => { Ok(CqlMap(read_and_check_io_error!(self, read_cql_map, col_meta, "Error reading column value (map)"))) },
             ColumnSet => { Ok(CqlSet(read_and_check_io_error!(self, read_cql_set, col_meta, "Error reading column value (set)"))) },
-            ColumnUnknown => fail!("Unknown column type !")
+            CqlValueType::ColumnUnknown => panic!("Unknown column type !")
         }
     }
 
     fn read_cql_collection_value(&mut self, col_type: &CqlValueType) -> RCResult<CqlValue> {
         match *col_type {
-            ColumnASCII => Ok(CqlASCII(read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading collection value (ASCII)"))),
-            ColumnVarChar => Ok(CqlVarchar(read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading collection value (VarChar)"))),
-            ColumnText => Ok(CqlText(read_and_check_io_error!(self, read_cql_str, Cqli16, "Error reading collection value (Text)"))),
-            ColumnInt => Ok(CqlInt(read_and_check_io_error!(self, read_cql_i32, Cqli16, "Error reading collection value (Int)"))),
-            ColumnBigInt => Ok(CqlBigInt(read_and_check_io_error!(self, read_cql_i64, Cqli16, "Error reading collection value (BigInt)"))),
-            ColumnFloat => Ok(CqlFloat(read_and_check_io_error!(self, read_cql_f32, Cqli16, "Error reading collection value (Float)"))),
-            ColumnDouble => Ok(CqlDouble(read_and_check_io_error!(self, read_cql_f64, Cqli16, "Error reading collection value (Double)"))),
+            ColumnASCII => Ok(CqlASCII(read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading collection value (ASCII)"))),
+            ColumnVarChar => Ok(CqlVarchar(read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading collection value (VarChar)"))),
+            ColumnText => Ok(CqlText(read_and_check_io_error!(self, read_cql_str, CqlBytesSize::Cqli16, "Error reading collection value (Text)"))),
+            ColumnInt => Ok(CqlInt(read_and_check_io_error!(self, read_cql_i32, CqlBytesSize::Cqli16, "Error reading collection value (Int)"))),
+            ColumnBigInt => Ok(CqlBigInt(read_and_check_io_error!(self, read_cql_i64, CqlBytesSize::Cqli16, "Error reading collection value (BigInt)"))),
+            ColumnFloat => Ok(CqlFloat(read_and_check_io_error!(self, read_cql_f32, CqlBytesSize::Cqli16, "Error reading collection value (Float)"))),
+            ColumnDouble => Ok(CqlDouble(read_and_check_io_error!(self, read_cql_f64, CqlBytesSize::Cqli16, "Error reading collection value (Double)"))),
             ColumnCustom => {
-                read_and_check_io_error!(self, read_cql_skip, Cqli16, "Error reading collection value (custom)");
+                read_and_check_io_error!(self, read_cql_skip, CqlBytesSize::Cqli16, "Error reading collection value (custom)");
                 println!("Custom parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnBlob => Ok(CqlBlob(read_and_check_io_error!(self, read_cql_blob, Cqli16, "Error reading collection value (blob)"))),
-            ColumnBoolean => Ok(CqlBoolean(read_and_check_io_error!(self, read_cql_boolean, Cqli16, "Error reading collection vaue (boolean)"))),
-            ColumnCounter => Ok(CqlCounter(read_and_check_io_error!(self, read_cql_i64, Cqli16, "Error reading collection value (counter"))),
+            ColumnBlob => Ok(CqlBlob(read_and_check_io_error!(self, read_cql_blob, CqlBytesSize::Cqli16, "Error reading collection value (blob)"))),
+            ColumnBoolean => Ok(CqlBoolean(read_and_check_io_error!(self, read_cql_boolean, CqlBytesSize::Cqli16, "Error reading collection vaue (boolean)"))),
+            ColumnCounter => Ok(CqlCounter(read_and_check_io_error!(self, read_cql_i64, CqlBytesSize::Cqli16, "Error reading collection value (counter"))),
             ColumnDecimal => {
-                read_and_check_io_error!(self, read_cql_skip, Cqli16, "Error reading collection value (decimal)");
+                read_and_check_io_error!(self, read_cql_skip, CqlBytesSize::Cqli16, "Error reading collection value (decimal)");
                 println!("Decimal parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnTimestamp => Ok(CqlTimestamp(read_and_check_io_error!(self, read_cql_u64, Cqli16, "Error reading collection value (timestamp)"))),
-            ColumnUuid => Ok(CqlUuid(read_and_check_io_error!(self, read_cql_uuid, Cqli16, "Error reading collection value (uuid)"))),
+            ColumnTimestamp => Ok(CqlTimestamp(read_and_check_io_error!(self, read_cql_u64, CqlBytesSize::Cqli16, "Error reading collection value (timestamp)"))),
+            ColumnUuid => Ok(CqlUuid(read_and_check_io_error!(self, read_cql_uuid, CqlBytesSize::Cqli16, "Error reading collection value (uuid)"))),
             ColumnVarint => {
-                read_and_check_io_error!(self, read_cql_skip, Cqli16, "Error reading collection value (varint)");
+                read_and_check_io_error!(self, read_cql_skip, CqlBytesSize::Cqli16, "Error reading collection value (varint)");
                 println!("Varint parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnTimeUuid => Ok(CqlTimeUuid(read_and_check_io_error!(self, read_cql_uuid, Cqli16, "Error reading collection value (timeuuid)"))),
-            ColumnInet => Ok(CqlInet(read_and_check_io_error!(self, read_cql_inet, Cqli16, "Error reading collection value (inet)"))),
-            _ => fail!("Unknown column type !")
+            ColumnTimeUuid => Ok(CqlTimeUuid(read_and_check_io_error!(self, read_cql_uuid, CqlBytesSize::Cqli16, "Error reading collection value (timeuuid)"))),
+            ColumnInet => Ok(CqlInet(read_and_check_io_error!(self, read_cql_inet, CqlBytesSize::Cqli16, "Error reading collection value (inet)"))),
+            _ => panic!("Unknown column type !")
         }
     }
 
@@ -358,10 +366,10 @@ impl<T: std::io::Reader> CqlReader for T {
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse> {
         let header_data = read_and_check_io_error!(self, read_exact, 4, "Error reading response header");
 
-        let version_header = *header_data.get(0);
-        let flags = *header_data.get(1);
-        let stream = *header_data.get(2) as i8;
-        let opcode = opcode_response(*header_data.get(3));
+        let version_header = header_data[0];
+        let flags = header_data[1];
+        let stream = header_data[2] as i8;
+        let opcode = opcode_response(header_data[3]);
         
         let length = read_and_check_io_error!(self, read_be_i32, "Error reading length response");
 
@@ -374,13 +382,13 @@ impl<T: std::io::Reader> CqlReader for T {
 
         // Open a file in write-only mode, returns `IoResult<File>`
         let mut file = match std::io::File::create(&path) {
-            Err(why) => fail!("couldn't create {}: {}", display, why.desc),
+            Err(why) => panic!("couldn't create {}: {}", display, why.desc),
             Ok(file) => file,
         };
 
         match file.write(body_data.as_slice()) {
             Err(why) => {
-                fail!("couldn't write to {}: {}", display, why.desc)
+                panic!("couldn't write to {}: {}", display, why.desc)
             },
             Ok(_) => println!("successfully wrote to {}", display),
         }
@@ -392,11 +400,11 @@ impl<T: std::io::Reader> CqlReader for T {
         let body = match opcode {
             OpcodeReady => ResponseReady,
             OpcodeAuthenticate => {
-                ResponseAuth(read_and_check_io_error!(reader, read_cql_str, Cqli16, "Error reading ResponseAuth").unwrap())
+                ResponseAuth(read_and_check_io_error!(reader, read_cql_str, CqlBytesSize::Cqli16, "Error reading ResponseAuth").unwrap())
             }
             OpcodeError => {
                 let code = read_and_check_io_error!(reader, read_be_u32, "Error reading error code");
-                let msg = read_and_check_io_error!(reader, read_cql_str, Cqli16, "Error reading error message").unwrap();
+                let msg = read_and_check_io_error!(reader, read_cql_str, CqlBytesSize::Cqli16, "Error reading error message").unwrap();
                 ResponseError(code, msg)
             },
             OpcodeResult => {
@@ -409,17 +417,17 @@ impl<T: std::io::Reader> CqlReader for T {
                         ResultRows(read_and_check_io_error!(reader, read_cql_rows, "Error reading result Rows"))
                     },
                     Some(KindSetKeyspace) => {
-                        let msg = read_and_check_io_error!(reader, read_cql_str, Cqli16, "Error reading result Keyspace").unwrap();
+                        let msg = read_and_check_io_error!(reader, read_cql_str, CqlBytesSize::Cqli16, "Error reading result Keyspace").unwrap();
                         ResultKeyspace(msg)
                     },
                     Some(KindSchemaChange) => {
-                        let change  = read_and_check_io_error!(reader, read_cql_str, Cqli16, "Error reading result SchemaChange (change)").unwrap();
-                        let keyspace = read_and_check_io_error!(reader, read_cql_str, Cqli16, "Error reading result SchemaChange (keyspace)").unwrap();
-                        let table = read_and_check_io_error!(reader, read_cql_str, Cqli16, "Error reading result SchemaChange (table)").unwrap();
+                        let change  = read_and_check_io_error!(reader, read_cql_str, CqlBytesSize::Cqli16, "Error reading result SchemaChange (change)").unwrap();
+                        let keyspace = read_and_check_io_error!(reader, read_cql_str, CqlBytesSize::Cqli16, "Error reading result SchemaChange (keyspace)").unwrap();
+                        let table = read_and_check_io_error!(reader, read_cql_str, CqlBytesSize::Cqli16, "Error reading result SchemaChange (table)").unwrap();
                         ResultSchemaChange(change, keyspace, table)
                     },
                     Some(KindPrepared) => {
-                        let id = read_and_check_io_error!(reader, read_cql_bytes, Cqli16, "Error reading result Prepared (id)");
+                        let id = read_and_check_io_error!(reader, read_cql_bytes, CqlBytesSize::Cqli16, "Error reading result Prepared (id)");
                         let metadata = read_and_check_io_error!(reader, read_cql_metadata, "Error reading result Prepared (metadata)");
                         let meta_result = if version >= 0x02 { 
                             Some(read_and_check_io_error!(reader, read_cql_metadata, "Error reading result Prepared (metadata result)"))

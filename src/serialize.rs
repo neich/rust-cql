@@ -1,6 +1,12 @@
 extern crate std;
 
 use super::def::*;
+use super::def::CqlBytesSize::*;
+use super::def::CqlRequestBody::*;
+use super::def::RCErrorType::*;
+use super::def::Query::*;
+use super::def::CqlValue::*;
+
 use super::client::Client;
 
 use std::path::BytesContainer;
@@ -479,7 +485,7 @@ impl<'a> CqlSerializable<'a> for CqlValue {
                     if v.len() == 0 { 0 }
                     else {
                         // Lists contain [short bytes] elements, hence the 2
-                        v.len() * (2 + v.get(0).len(version))
+                        v.len() * (2 + v[0].len(version))
                     }                   
                 },
                 None => 0
@@ -489,7 +495,7 @@ impl<'a> CqlSerializable<'a> for CqlValue {
                     if v.len() == 0 { 0 }
                     else {
                         // Maps contain [short bytes] elements, hence the 2
-                        v.len() * (2 + v.get(0).len(version))
+                        v.len() * (2 + v[0].len(version))
                     }                   
                 },
                 None => 0
@@ -499,7 +505,7 @@ impl<'a> CqlSerializable<'a> for CqlValue {
                     if v.len() == 0 { 0 }
                     else {
                         // Sets contain [short bytes] elements, hence the 2
-                        v.len() * (2 + v.get(0).len(version))
+                        v.len() * (2 + v[0].len(version))
                     }                   
                 },
                 None => 0

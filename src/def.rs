@@ -5,6 +5,7 @@ extern crate uuid;
 use std::str::SendStr;
 use std::io::net::ip::IpAddr;
 use self::uuid::Uuid;
+use std::str::IntoMaybeOwned;
 
 pub enum OpcodeRequest {
     //requests
@@ -51,15 +52,15 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
         0x0B => OpcodeRegister,
         */
 
-        0x00 => OpcodeError,
-        0x02 => OpcodeReady,
-        0x03 => OpcodeAuthenticate,
-        0x06 => OpcodeSupported,
-        0x08 => OpcodeResult,
+        0x00 => OpcodeResponse::OpcodeError,
+        0x02 => OpcodeResponse::OpcodeReady,
+        0x03 => OpcodeResponse::OpcodeAuthenticate,
+        0x06 => OpcodeResponse::OpcodeSupported,
+        0x08 => OpcodeResponse::OpcodeResult,
         // 0x0A => OpcodeExecute,
-        0x0C => OpcodeEvent,
+        0x0C => OpcodeResponse::OpcodeEvent,
 
-        _ => OpcodeUnknown
+        _ => OpcodeResponse::OpcodeUnknown
     }
 }
 
@@ -112,27 +113,27 @@ pub enum CqlValueType {
 
 pub fn cql_column_type(val: u16) -> CqlValueType {
     match val {
-        0x0000 => ColumnCustom,
-        0x0001 => ColumnASCII,
-        0x0002 => ColumnBigInt,
-        0x0003 => ColumnBlob,
-        0x0004 => ColumnBoolean,
-        0x0005 => ColumnCounter,
-        0x0006 => ColumnDecimal,
-        0x0007 => ColumnDouble,
-        0x0008 => ColumnFloat,
-        0x0009 => ColumnInt,
-        0x000A => ColumnText,
-        0x000B => ColumnTimestamp,
-        0x000C => ColumnUuid,
-        0x000D => ColumnVarChar,
-        0x000E => ColumnVarint,
-        0x000F => ColumnTimeUuid,
-        0x0010 => ColumnInet,
-        0x0020 => ColumnList,
-        0x0021 => ColumnMap,
-        0x0022 => ColumnSet,
-        _ => ColumnUnknown
+        0x0000 => CqlValueType::ColumnCustom,
+        0x0001 => CqlValueType::ColumnASCII,
+        0x0002 => CqlValueType::ColumnBigInt,
+        0x0003 => CqlValueType::ColumnBlob,
+        0x0004 => CqlValueType::ColumnBoolean,
+        0x0005 => CqlValueType::ColumnCounter,
+        0x0006 => CqlValueType::ColumnDecimal,
+        0x0007 => CqlValueType::ColumnDouble,
+        0x0008 => CqlValueType::ColumnFloat,
+        0x0009 => CqlValueType::ColumnInt,
+        0x000A => CqlValueType::ColumnText,
+        0x000B => CqlValueType::ColumnTimestamp,
+        0x000C => CqlValueType::ColumnUuid,
+        0x000D => CqlValueType::ColumnVarChar,
+        0x000E => CqlValueType::ColumnVarint,
+        0x000F => CqlValueType::ColumnTimeUuid,
+        0x0010 => CqlValueType::ColumnInet,
+        0x0020 => CqlValueType::ColumnList,
+        0x0021 => CqlValueType::ColumnMap,
+        0x0022 => CqlValueType::ColumnSet,
+        _ => CqlValueType::ColumnUnknown
     }
 }
 
@@ -154,10 +155,10 @@ pub struct RCError {
 }
 
 impl RCError {
-    pub fn new<T: IntoMaybeOwned<'static>>(msg: T, kind: RCErrorType) -> RCError {
+    pub fn new<T: IntoCow<'static, String, str>>(msg: T, kind: RCErrorType) -> RCError {
         RCError {
             kind: kind,
-            desc: msg.into_maybe_owned()
+            desc: msg.into_cow()
         }
     }
 }

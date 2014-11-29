@@ -1,4 +1,4 @@
-#![crate_name = "cql"]
+#![crate_name = "rust-cql"]
 #![comment = "A Rust CQl binary protocol implementation"]
 #![license = "MIT/ASL2"]
 #![crate_type = "rlib"]
@@ -13,32 +13,34 @@ pub use client::connect;
 pub use def::Consistency;
 pub use def::BatchType;
 pub use def::CqlValue;
-pub use def::CqlFloat;
-pub use def::CqlVarchar;
+pub use def::CqlValue::CqlFloat;
+pub use def::CqlValue::CqlVarchar;
 pub use def::CQLList;
 pub use def::CQLMap;
 pub use def::CQLSet;
-pub use def::QueryStr;
-pub use def::QueryPrepared;
+pub use def::Query::QueryStr;
+pub use def::Query::QueryPrepared;
+pub use def::OpcodeResponse;
+pub use def::CqlResponseBody;
 
 #[macro_export]
 macro_rules! read_and_check_io_error(
     ($reader: expr, $method: ident, $msg: expr) => {
         match $reader.$method() {
             Ok(val) => val,
-            Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), ReadError))
+            Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), RCErrorType::ReadError))
         }
     };
     ($reader: expr, $method: ident, $arg: expr, $msg: expr) => {
         match $reader.$method($arg) {
             Ok(val) => val,
-            Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), ReadError))
+            Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), RCErrorType::ReadError))
         }
     };
     ($reader: ident, $method: ident, $arg1: expr, $arg2: expr, $msg: expr) => {
         match $reader.$method($arg1, $arg2) {
             Ok(val) => val,
-            Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), ReadError))
+            Err(e) => return Err(RCError::new(format!("{} -> {}", $msg, e.desc), RCErrorType::ReadError))
         }
     }
 )
@@ -48,7 +50,7 @@ macro_rules! read_and_check_io_error(
 macro_rules! write_and_check_io_error(
     ($writer: ident, $method: ident, $arg: expr, $msg: expr) => {
         match $writer.$method($arg) {
-            Err(e) => return Err(RCError { kind: WriteError, desc: format!("{} -> {}", $msg, e.desc).into_maybe_owned()}),
+            Err(e) => return Err(RCError { kind: RCErrorType::WriteError, desc: format!("{} -> {}", $msg, e.desc).into_cow()}),
             _ => ()
         }
     }
@@ -72,7 +74,7 @@ macro_rules! read_and_check_io_option(
 
 macro_rules! sendstr_tuple_void(
     () => {
-        ("".into_maybe_owned(), "".into_maybe_owned())
+        ("".into_cow(), "".into_cow())
     }
 )
 

@@ -7,6 +7,11 @@ extern crate uuid;
 use std::str::SendStr;
 
 use super::def::*;
+use super::def::OpcodeRequest::*;
+use super::def::CqlRequestBody::*;
+use super::def::RCErrorType::*;
+use super::def::CqlResponseBody::*;
+
 use super::serialize::CqlSerializable;
 use super::reader::*;
 use std::collections::TreeMap;
@@ -17,7 +22,7 @@ pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 macro_rules! serialize_and_check_io_error(
     ($method: ident, $writer: expr, $obj: ident, $arg: ident, $msg: expr) => {
         match $obj.$method($writer, $arg) {
-            Err(e) => return Err(RCError { kind: SerializeError, desc: format!("{} -> {}", $msg, e.desc).into_maybe_owned()}),
+            Err(e) => return Err(RCError { kind: SerializeError, desc: format!("{} -> {}", $msg, e.desc).into_cow()}),
             _ => ()
         }
     }
@@ -123,7 +128,7 @@ impl Client {
         let path = Path::new("batch_data.bin");
         let display = path.display();
         let mut file = match std::io::File::create(&path) {
-            Err(why) => fail!("couldn't create {}: {}", display, why.desc),
+            Err(why) => panic!("couldn't create {}: {}", display, why.desc),
             Ok(file) => file,
         };
 
@@ -207,7 +212,7 @@ pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCRe
     let mut version = CQL_MAX_SUPPORTED_VERSION;
 
     while version >= 0x01 {
-        let res = std::io::TcpStream::connect(ip.as_slice(), port);
+        let res = std::io::TcpStream::connect((ip, port));
         if res.is_err() {
             return Err(RCError::new(format!("Failed to connect to server at {}:{}", ip.as_slice(), port), ConnectionError));
         }
