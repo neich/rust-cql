@@ -1,0 +1,13 @@
+[package]
+
+name = "rust-cql"
+version = "0.0.1"
+authors = ["Ignacio Martín <natx.mc@gmail.com>"]
+
+[dependencies.uuid]
+
+git = "https://github.com/rust-lang/uuid.git"
+
+[dependencies.num]
+
+git = "https://github.com/rust-lang/num"
