@@ -17,6 +17,7 @@ What works:
 - Execute queries
 - Create prepared queries
 - Execute prepared queries
+- Execute batch queries
 
 What doesn't work:
 - Decimal and Varint types
