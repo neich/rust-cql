@@ -2,3 +2,6 @@ bin/
 lib/
 *sublime-*
 .idea/
+*.bin
+target/
+Cargo.lock
