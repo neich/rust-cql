@@ -1,46 +1,34 @@
-
 extern crate std;
 extern crate core;
 extern crate num;
 extern crate uuid;
+extern crate collections;
 
-use std::str::SendStr;
+use std::collections::BTreeMap;
 
 use super::def::*;
 use super::def::OpcodeRequest::*;
 use super::def::CqlRequestBody::*;
 use super::def::RCErrorType::*;
 use super::def::CqlResponseBody::*;
-
 use super::serialize::CqlSerializable;
 use super::reader::*;
-use std::collections::TreeMap;
 
-pub static CQL_VERSION_STRINGS:  [&'static str, .. 3] = ["3.0.0", "3.0.0", "3.0.0"];
+pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
-macro_rules! serialize_and_check_io_error(
-    ($method: ident, $writer: expr, $obj: ident, $arg: ident, $msg: expr) => {
-        match $obj.$method($writer, $arg) {
-            Err(e) => return Err(RCError { kind: SerializeError, desc: format!("{} -> {}", $msg, e.desc).into_cow()}),
-            _ => ()
-        }
-    }
-)
-
-type PrepsStore = TreeMap<String, Box<CqlPreparedStat>>;
+type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
 
 pub struct Client {
-    socket: std::io::net::tcp::TcpStream,
+    socket: std::net::TcpStream,
     pub version: u8,
     prepared: PrepsStore
 }
 
-
 impl Client {
 
-    fn new(socket: std::io::net::tcp::TcpStream, version: u8) -> Client {
-        Client {socket: socket, version: version, prepared: TreeMap::new()}
+    fn new(socket: std::net::TcpStream, version: u8) -> Client {
+        Client {socket: socket, version: version, prepared: BTreeMap::new()}
     }
 
     fn build_auth<'a>(&self, creds: &'a Vec<SendStr>, stream: i8) -> CqlRequest<'a> {
@@ -64,13 +52,13 @@ impl Client {
     }
 
     pub fn get_prepared_statement(&mut self, ps_id: &str) -> RCResult<&CqlPreparedStat> {
-        match self.prepared.find(&String::from_str(ps_id)) {
+        match self.prepared.get(&String::from_str(ps_id)) {
             Some(ps) => Ok(&**ps),
             None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
         }
     }
 
-    pub fn exec_query(&mut self, query_str: &str, con: Consistency::Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_query(&mut self, query_str: &str, con: Consistency) -> RCResult<CqlResponse> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -78,13 +66,12 @@ impl Client {
             opcode: OpcodeQuery,
             body: RequestQuery(query_str, con, 0)};
 
-        let mut socket = self.socket.clone();
-        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing query");
-        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, self.version, "Error reading query");
-        Ok(res)
+        let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
+        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing query");
+        Ok(try_rc!(socket.read_cql_response(self.version), "Error reading query"))
     }
 
-    pub fn exec_prepared(&mut self, ps_id: SendStr, params: &[CqlValue], con: Consistency::Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_prepared(&mut self, ps_id: SendStr, params: &[CqlValue], con: Consistency) -> RCResult<CqlResponse> {
 
         let q = CqlRequest {
             version: self.version,
@@ -94,14 +81,14 @@ impl Client {
             body: RequestExec(ps_id, params, con, 0x01),
         };
 
-        let mut socket = self.socket.clone();
-        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing prepared statement execution");
+        let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
+        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing prepared statement execution");
 
         /* Code to debug prepared statements. Write to file the serialization of the request
 
         let path = Path::new("prepared_data.bin");
         let display = path.display();
-        let mut file = match std::io::File::create(&path) {
+        let mut file = match std::old_io::File::create(&path) {
             Err(why) => fail!("couldn't create {}: {}", display, why.desc),
             Ok(file) => file,
         };
@@ -110,10 +97,10 @@ impl Client {
         
         */
 
-        Ok(read_and_check_io_error!(socket, read_cql_response, self.version, "Error reading prepared statement execution result"))
+        Ok(try_rc!(socket.read_cql_response(self.version), "Error reading prepared statement execution result"))
     }
 
-    pub fn exec_batch(&mut self, q_type: BatchType::BatchType, q_vec: Vec<Query>, con: Consistency::Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> RCResult<CqlResponse> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -121,21 +108,21 @@ impl Client {
             opcode: OpcodeBatch,
             body: RequestBatch(q_vec, q_type, con, 0)};
 
-        let mut socket = self.socket.clone();
-
-        /* Code to debug batch statements. Write to file the serialization of the request */
+        /* Code to debug batch statements. Write to file the serialization of the request
 
         let path = Path::new("batch_data.bin");
         let display = path.display();
-        let mut file = match std::io::File::create(&path) {
+        let mut file = match std::old_io::File::create(&path) {
             Err(why) => panic!("couldn't create {}: {}", display, why.desc),
             Ok(file) => file,
         };
 
         serialize_and_check_io_error!(serialize_with_client, &mut file, q, self, "Error serializing to file");
+        */
 
-        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing BATCH request");
-        let res = read_and_check_io_error!(&mut self.socket, read_cql_response, self.version, "Error reading query");
+        let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
+        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing BATCH request");
+        let res = try_rc!(socket.read_cql_response(self.version), "Error reading query");
         Ok(res)
     }
 
@@ -149,10 +136,10 @@ impl Client {
             body: RequestPrepare(query_str),
         };
 
-        let mut socket = self.socket.clone();
-        serialize_and_check_io_error!(serialize_with_client, &mut socket, q, self, "Error serializing prepared statement");
+        let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
+        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing prepared statement");
 
-        let res = read_and_check_io_error!(&mut socket, read_cql_response, self.version, "Error reading query");
+        let res = try_rc!(socket.read_cql_response(self.version), "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
                 self.prepared.insert(String::from_str(query_id), preps);
@@ -164,9 +151,9 @@ impl Client {
 }
 
 
-fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec<SendStr>>) -> RCResult<()> {
+fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Vec<SendStr>>) -> RCResult<()> {
     let body = CqlStringMap {
-        pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(version-1) as uint]}],
+        pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(version-1) as usize]}],
     };
     let msg_startup = CqlRequest {
         version: version,
@@ -175,9 +162,10 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
         opcode: OpcodeStartup,
         body: RequestStartup(body),
     };
-    serialize_and_check_io_error!(serialize, socket, msg_startup, version, "Error serializing startup message");
 
-    let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding response");
+    try_rc!(msg_startup.serialize(socket, version), "Error serializing startup message");
+
+    let response = try_rc!(socket.read_cql_response(version), "Error reding response");
     match response.body {
         ResponseReady =>  Ok(()),
         ResponseAuth(_) => {
@@ -190,9 +178,9 @@ fn send_startup(socket: &mut std::io::TcpStream, version: u8, creds: Option<&Vec
                         opcode: OpcodeOptions,
                         body: RequestCred(cred),
                     };
-                    serialize_and_check_io_error!(serialize, socket, msg_auth, version, "Error serializing request (auth)");
+                    try_rc!(msg_auth.serialize(socket, version), "Error serializing request (auth)");
                     
-                    let response = read_and_check_io_error!(socket, read_cql_response, version, "Error reding authenticaton response");
+                    let response = try_rc!(socket.read_cql_response(version), "Error reding authenticaton response");
                     match response.body {
                         ResponseReady => Ok(()),
                         ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
@@ -212,7 +200,7 @@ pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCRe
     let mut version = CQL_MAX_SUPPORTED_VERSION;
 
     while version >= 0x01 {
-        let res = std::io::TcpStream::connect((ip, port));
+        let res = std::net::TcpStream::connect((ip, port));
         if res.is_err() {
             return Err(RCError::new(format!("Failed to connect to server at {}:{}", ip.as_slice(), port), ConnectionError));
         }

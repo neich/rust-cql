@@ -2,11 +2,17 @@ extern crate std;
 extern crate num;
 extern crate uuid;
 
-use std::str::SendStr;
-use std::io::net::ip::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::Ipv6Addr;
 use self::uuid::Uuid;
-use std::str::IntoMaybeOwned;
+use std::borrow::Cow;
+use std::borrow::IntoCow;
+use std::ops::Deref;
 
+pub type SendStr = Cow<'static, str>;
+
+
+#[derive(ToPrimitive, Copy)]
 pub enum OpcodeRequest {
     //requests
     OpcodeStartup = 0x01,
@@ -19,7 +25,7 @@ pub enum OpcodeRequest {
     OpcodeBatch = 0x0D
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub enum OpcodeResponse {
     //responces
     OpcodeError = 0x00,
@@ -32,7 +38,8 @@ pub enum OpcodeResponse {
     OpcodeUnknown
 }
 
-#[deriving(Show, FromPrimitive)]
+#[derive(Debug)]
+#[derive(FromPrimitive)]
 pub enum KindResult {
     KindVoid = 0x0001,
     KindRows = 0x0002,
@@ -64,29 +71,28 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
     }
 }
 
-pub mod Consistency {
-    pub enum Consistency {
-        Any = 0x0000,
-        One = 0x0001,
-        Two = 0x0002,
-        Three = 0x0003,
-        Quorum = 0x0004,
-        All = 0x0005,
-        LocalQuorum = 0x0006,
-        EachQuorum = 0x0007,
-        Unknown,
-    }
+
+#[derive(ToPrimitive, Copy)]
+pub enum Consistency {
+    Any = 0x0000,
+    One = 0x0001,
+    Two = 0x0002,
+    Three = 0x0003,
+    Quorum = 0x0004,
+    All = 0x0005,
+    LocalQuorum = 0x0006,
+    EachQuorum = 0x0007,
+    Unknown,
 }
 
-pub mod BatchType {
-    pub enum BatchType {
-        Logged = 0x00,
-        Unlogged = 0x01,
-        Counter = 0x02
-    }
+#[derive(ToPrimitive, Copy)]
+pub enum BatchType {
+    Logged = 0x00,
+    Unlogged = 0x01,
+    Counter = 0x02
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub enum CqlValueType {
     ColumnCustom = 0x0000,
     ColumnASCII = 0x0001,
@@ -138,32 +144,65 @@ pub fn cql_column_type(val: u16) -> CqlValueType {
 }
 
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub enum RCErrorType {
     ReadError,
     WriteError,
     SerializeError,
     ConnectionError,
     NoDataError,
-    GenericError
+    GenericError,
+    IOError
 }
 
-#[deriving(Show)]
+#[derive(Debug, Display)]
 pub struct RCError {
     pub kind: RCErrorType,
     pub desc: SendStr,
 }
 
 impl RCError {
-    pub fn new<T: IntoCow<'static, String, str>>(msg: T, kind: RCErrorType) -> RCError {
+    pub fn new<T: IntoCow<'static, str>>(msg: T, kind: RCErrorType) -> RCError {
         RCError {
             kind: kind,
             desc: msg.into_cow()
         }
     }
+    pub fn description(&self) -> &str {
+        return self.desc.deref();
+    }
+
+}
+
+impl std::error::Error for RCError {
+    fn description(&self) -> &str {
+        return self.desc.deref();
+    }
+
+    fn cause(&self) -> Option<&std::error::Error> {
+        return None;
+    }
+}
+
+impl std::fmt::Display for RCError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "Error: {}", self.desc)
+    }
+}
+
+impl std::error::FromError<std::io::Error> for RCError {
+    fn from_error(err: std::io::Error) -> RCError {
+        RCError { kind: RCErrorType::IOError, desc: String::from_str(err.description()).into_cow() }   
+    }
 }
 
 pub type RCResult<T> = Result<T, RCError>;
+
+#[derive(Debug)]
+pub enum IpAddr {
+    Ipv4(Ipv4Addr),
+    Ipv6(Ipv6Addr)
+}
 
 pub struct CqlStringMap {
     pub pairs: Vec<CqlPair>,
@@ -174,14 +213,18 @@ pub struct CqlPair {
     pub value: &'static str,
 }
 
+#[derive(Debug, Copy)]
 pub enum CqlBytesSize {
    Cqli32,
    Cqli16 
 }
 
+pub struct CqlTableDesc {
+    pub keyspace: String,
+    pub tablename: String
+}
 
-
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct CqlColMetadata {
     pub keyspace: SendStr,
     pub table: SendStr,
@@ -191,7 +234,7 @@ pub struct CqlColMetadata {
     pub col_type_aux2: CqlValueType
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct CqlMetadata {
     pub flags: u32,
     pub column_count: u32,
@@ -200,7 +243,7 @@ pub struct CqlMetadata {
     pub row_metadata: Vec<CqlColMetadata>,
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct Pair<T, V> {
     pub key: T,
     pub value: V
@@ -210,7 +253,7 @@ pub type CQLList = Vec<CqlValue>;
 pub type CQLMap = Vec<Pair<CqlValue, CqlValue>>;
 pub type CQLSet = Vec<CqlValue>;
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub enum CqlValue {
     CqlASCII(Option<SendStr>),
     CqlBigInt(Option<i64>),
@@ -234,7 +277,7 @@ pub enum CqlValue {
     CqlUnknown,
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct CqlRow {
     pub cols: Vec<CqlValue>,
 }
@@ -255,7 +298,7 @@ impl CqlRow {
 }
 */
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct CqlRows {
     pub metadata: Box<CqlMetadata>,
     pub rows: Vec<CqlRow>,
@@ -272,14 +315,14 @@ pub struct CqlRequest<'a> {
 pub enum CqlRequestBody<'a> {
     RequestStartup(CqlStringMap),
     RequestCred(&'a Vec<SendStr>),
-    RequestQuery(&'a str, Consistency::Consistency, u8),
+    RequestQuery(&'a str, Consistency, u8),
     RequestPrepare(&'a str),
-    RequestExec(SendStr, &'a [CqlValue], Consistency::Consistency, u8),
-    RequestBatch(Vec<Query>, BatchType::BatchType, Consistency::Consistency, u8),
+    RequestExec(SendStr, &'a [CqlValue], Consistency, u8),
+    RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct CqlResponse {
     pub version: u8,
     pub flags: u8,
@@ -288,7 +331,7 @@ pub struct CqlResponse {
     pub body: CqlResponseBody,
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub enum CqlResponseBody {
     ResponseError(u32, SendStr),
     ResponseReady,
@@ -304,7 +347,7 @@ pub enum CqlResponseBody {
     ResponseEmpty,
 }
 
-#[deriving(Show)]
+#[derive(Debug)]
 pub struct CqlPreparedStat {
     pub id: Vec<u8>,
     pub meta: Box<CqlMetadata>,

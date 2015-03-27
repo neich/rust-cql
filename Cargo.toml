@@ -1,6 +1,6 @@
 [package]
 
-name = "rust-cql"
+name = "cql"
 version = "0.0.1"
 authors = ["Ignacio Martín <natx.mc@gmail.com>"]
 
@@ -11,3 +11,6 @@ git = "https://github.com/rust-lang/uuid.git"
 [dependencies.num]
 
 git = "https://github.com/rust-lang/num"
+
+[dependencies]
+byteorder = "*"
