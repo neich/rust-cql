@@ -1,4 +1,4 @@
-#![feature(macro_rules)]
+#![feature(macro_rules, into_cow)]
 
 #[macro_use]
 extern crate cql;
