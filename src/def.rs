@@ -193,7 +193,7 @@ impl std::fmt::Display for RCError {
 
 impl std::convert::From<std::io::Error> for RCError {
     fn from(err: std::io::Error) -> RCError {
-        RCError { kind: RCErrorType::IOError, desc: String::from_str(err.description()).into_cow() }   
+        RCError { kind: RCErrorType::IOError, desc: err.description().to_string().into_cow() }   
     }
 }
 

@@ -52,7 +52,7 @@ impl Client {
     }
 
     pub fn get_prepared_statement(&mut self, ps_id: &str) -> RCResult<&CqlPreparedStat> {
-        match self.prepared.get(&String::from_str(ps_id)) {
+        match self.prepared.get(ps_id) {
             Some(ps) => Ok(&**ps),
             None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
         }
@@ -142,7 +142,7 @@ impl Client {
         let res = try_rc!(socket.read_cql_response(self.version), "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
-                self.prepared.insert(String::from_str(query_id), preps);
+                self.prepared.insert(query_id.to_string(), preps);
                 Ok(())
             },
             _ => Err(RCError::new("Response does not contain prepared statement", ReadError))
