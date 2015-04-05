@@ -349,7 +349,7 @@ impl<T: std::io::Read> CqlReader for T {
         let rows_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading metadata");
 
         let mut rows:Vec<CqlRow> = vec![];
-        for _ in std::iter::range(0u32, rows_count) {
+        for _ in (0u32..rows_count) {
             let mut row = CqlRow{ cols: vec![] };
             for meta in metadata.row_metadata.iter() {
                 let col = try_rc!(self.read_cql_column_value(meta), "Error reading column value");
