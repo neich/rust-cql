@@ -6,7 +6,6 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::borrow::IntoCow;
 use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian, Error};
-use std::ffi::IntoBytes;
 use std::raw::Slice;
 use std::mem;
 
