@@ -28,7 +28,10 @@ macro_rules! try_bo(
         match $call {
             Ok(val) => val,
             Err(self::byteorder::Error::UnexpectedEOF) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, "Unexpected EOF"), $crate::def::RCErrorType::IOError)),
-            Err(self::byteorder::Error::Io(ref err)) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            Err(self::byteorder::Error::Io(ref err)) => {
+            	use std::error::Error;
+            	return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            }
         };
     }
 );
@@ -38,7 +41,10 @@ macro_rules! try_io(
     ($call: expr, $msg: expr) => {
         match $call {
             Ok(val) => val,
-            Err(ref err) => return Err(RCError::new(format!("{} -> {}", $msg, err.description()), RCErrorType::IOError))
+            Err(ref err) => {
+            	use std::error::Error;
+            	return Err(RCError::new(format!("{} -> {}", $msg, err.description()), RCErrorType::IOError))
+            }
         };
     }
 );

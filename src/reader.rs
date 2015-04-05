@@ -17,9 +17,10 @@ use std::net::Ipv6Addr;
 use std::borrow::IntoCow;
 use std::io::Read;
 use std::io::Write;
-use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian, Error};
+use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
 use std::mem::size_of;
 use std::path::Path;
+use std::error::Error;
 
 pub trait CqlReader {
     fn read_exact(&mut self, n: u64) -> RCResult<Vec<u8>>;

@@ -8,6 +8,7 @@ use self::uuid::Uuid;
 use std::borrow::Cow;
 use std::borrow::IntoCow;
 use std::ops::Deref;
+use std::error::Error;
 
 pub type SendStr = Cow<'static, str>;
 
