@@ -190,8 +190,8 @@ impl std::fmt::Display for RCError {
     }
 }
 
-impl std::error::FromError<std::io::Error> for RCError {
-    fn from_error(err: std::io::Error) -> RCError {
+impl std::convert::From<std::io::Error> for RCError {
+    fn from(err: std::io::Error) -> RCError {
         RCError { kind: RCErrorType::IOError, desc: String::from_str(err.description()).into_cow() }   
     }
 }
