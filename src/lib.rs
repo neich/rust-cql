@@ -3,7 +3,7 @@
 //#![license = "MIT/ASL2"]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![feature(custom_derive, core, into_cow, convert)]
+#![feature(custom_derive, core, into_cow, convert, collections)]
 
 pub use client::connect;
 pub use def::Consistency;
