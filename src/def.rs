@@ -12,7 +12,7 @@ use std::ops::Deref;
 pub type SendStr = Cow<'static, str>;
 
 
-#[derive(ToPrimitive, Copy)]
+#[derive(ToPrimitive, Clone, Copy)]
 pub enum OpcodeRequest {
     //requests
     OpcodeStartup = 0x01,
@@ -72,7 +72,7 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
 }
 
 
-#[derive(ToPrimitive, Copy)]
+#[derive(ToPrimitive, Clone, Copy)]
 pub enum Consistency {
     Any = 0x0000,
     One = 0x0001,
@@ -85,7 +85,7 @@ pub enum Consistency {
     Unknown,
 }
 
-#[derive(ToPrimitive, Copy)]
+#[derive(ToPrimitive, Clone, Copy)]
 pub enum BatchType {
     Logged = 0x00,
     Unlogged = 0x01,
@@ -213,7 +213,7 @@ pub struct CqlPair {
     pub value: &'static str,
 }
 
-#[derive(Debug, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum CqlBytesSize {
    Cqli32,
    Cqli16 
