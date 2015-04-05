@@ -1,6 +1,7 @@
 extern crate uuid;
 extern crate std;
 extern crate byteorder;
+extern crate core;
 
 use super::def::*;
 use super::def::CqlValue::*;
@@ -21,13 +22,14 @@ use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
 use std::mem::size_of;
 use std::path::Path;
 use std::error::Error;
+use self::core::num::ToPrimitive;
 
 pub trait CqlReader {
     fn read_exact(&mut self, n: u64) -> RCResult<Vec<u8>>;
 
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32>;
 
-    fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: usize) -> RCResult<usize>;
+    fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: usize) -> RCResult<isize>;
     fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>>;
 
     fn read_cql_str(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SendStr>>;
@@ -72,12 +74,12 @@ impl<T: std::io::Read> CqlReader for T {
         }       
     }
 
-    fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: usize) -> RCResult<usize> {
+    fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: usize) -> RCResult<isize> {
         let len = match val_type {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length") as usize,
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as usize
+            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length") as isize,
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as isize
         };
-        if (len != -1 && len != length) {
+        if (len != -1 && len.to_usize() != Some(length)) {
             Err(RCError::new(format!("Error reading bytes, length ({}) different than expected ({})", len, length), RCErrorType::ReadError))
         }  else {
             Ok(len)
