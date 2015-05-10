@@ -3,7 +3,10 @@
 //#![license = "MIT/ASL2"]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-#![feature(custom_derive, core, into_cow, convert, collections)]
+// #![feature(custom_derive, core, into_cow, convert, collections)]
+// #![feature(custom_derive)]
+
+#[macro_use] extern crate enum_primitive as ep;
 
 pub use client::connect;
 pub use def::Consistency;
@@ -18,7 +21,6 @@ pub use def::Query::QueryStr;
 pub use def::Query::QueryPrepared;
 pub use def::OpcodeResponse;
 pub use def::CqlResponseBody;
-use std::borrow::IntoCow;
 pub use def::RCResult;
 pub use def::RCError;
 
@@ -83,9 +85,9 @@ macro_rules! try_rc_noption(
 );
 
 
-macro_rules! sendstr_tuple_void(
+macro_rules! CowStr_tuple_void(
     () => {
-        ("".into_cow(), "".into_cow())
+        (Cow::Borrowed(""), Cow::Borrowed(""))
     }
 );
 

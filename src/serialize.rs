@@ -1,12 +1,11 @@
 extern crate std;
 extern crate byteorder;
 
-use std::iter::AdditiveIterator;
+// use std::iter::AdditiveIterator;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
-use std::borrow::IntoCow;
+use std::borrow::Cow;
 use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian, Error};
-use std::raw::Slice;
 use std::mem;
 
 use super::def::*;
@@ -19,6 +18,7 @@ use super::client::Client;
 
 // From
 // http://stackoverflow.com/questions/26714984/rust-how-to-borrow-an-immutable-view-slice-to-a-vector-as-octets
+/*
 fn view_as_bytes<'a, T: Copy>(items: &'a [T]) -> &'a [u8] {  // '
     let raw_items: Slice<T> = unsafe { mem::transmute(items) };
     let raw_bytes = Slice {
@@ -28,7 +28,7 @@ fn view_as_bytes<'a, T: Copy>(items: &'a [T]) -> &'a [u8] {  // '
     let bytes: &[u8] = unsafe { mem::transmute(raw_bytes) };
     bytes
 }
-
+*/
 
 pub trait CqlSerializable<'a> {
     fn len(&'a self, version: u8) -> usize;
@@ -107,13 +107,13 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 let ocode = self.opcode as u8;
                 serialize_header(buf, &cl.version, &self.flags, &self.stream, &ocode, &len);
                 let version = self.version;
-                let preps = match cl.get_prepared_statement(ps_id.as_slice()) {
+                let preps = match cl.get_prepared_statement(ps_id) {
                     Ok(ps) => ps,
                     Err(_) => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
                 };
 
                 try_bo!(buf.write_i16::<BigEndian>(preps.id.len() as i16), "Error serializing EXEC request (id length)");
-                try_io!(buf.write(preps.id.as_slice()), "Error serializing EXEC request (id)");
+                try_io!(buf.write(&preps.id), "Error serializing EXEC request (id)");
                 if version >= 2 {
                     try_bo!(buf.write_u16::<BigEndian>(*cons as u16), "Error serializing CqlRequest (query consistency)");
                     try_bo!(buf.write_u8(flags), "Error serializing CqlRequest (query flags)");
@@ -191,16 +191,18 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
         match self.body {
             RequestExec(ref ps_id, ref values, _, _) => {
                 let version = self.version;
-                let preps = match cl.get_prepared_statement(ps_id.as_slice()) {
+                let preps = match cl.get_prepared_statement(ps_id) {
                     Ok(ps) => ps,
                     Err(_) => return 0
                 };
 
                 let final_bytes = if version >= 2 { 3 } else { 2 };
-                8 + 2 + preps.id.as_slice().len() + 2 + values.iter().map(|e| 4 + e.len(version)).sum() + final_bytes
+                let values_size:usize = values.iter().fold(0, |a, ref b| a + 4 + b.len(version));
+                8 + 2 + preps.id.len() as usize + 2 +  values_size + final_bytes as usize
             },
             RequestBatch(ref q_vec, ref r_type, ref con, flags) => {
-                8 + 3 + q_vec.iter().map(|q| q.len_with_client(cl)).sum() + 2
+                let q_vec_size:usize = q_vec.iter().fold(0, |a, ref b| a + b.len_with_client(cl));
+                8 + 3 + q_vec_size + 2
             }
             _ => self.len(cl.version)
         }
@@ -241,14 +243,14 @@ impl<'a> CqlSerializable<'a> for Query {
         match *self {
             QueryPrepared(ref p_name, ref values) => {
                 let version = cl.version;
-                let preps = match cl.get_prepared_statement(p_name.as_slice()) {
+                let preps = match cl.get_prepared_statement(p_name) {
                     Ok(ps) => ps,
                     Err(_) => return Err(RCError::new(format!("Unknown prepared statement <{}>", p_name), GenericError))
                 };
 
                 try_bo!(buf.write_u8(1u8), "Error serializing BATCH prepared query (type)");
                 write_size!(buf, preps.id.len(), Cqli16);
-                try_io!(buf.write(preps.id.as_slice()), "Error serializing BATCH prepared query (id)");
+                try_io!(buf.write(&preps.id), "Error serializing BATCH prepared query (id)");
                 try_bo!(buf.write_u16::<BigEndian>(values.len() as u16), "Error serializing BATCH prepared query (values length)");
                 values.iter().all(|v| { v.serialize(buf, version); true});
 
@@ -263,12 +265,13 @@ impl<'a> CqlSerializable<'a> for Query {
         match *self {
             QueryPrepared(ref p_name, ref values) => {
                 let version = cl.version;
-                let preps = match cl.get_prepared_statement(p_name.as_slice()) {
+                let preps = match cl.get_prepared_statement(p_name) {
                     Ok(ps) => ps,
                     Err(_) => return 0
                 };
 
-                5 + preps.id.len() + values.iter().map(|e| 4 + e.len(version)).sum()
+                let values_size:usize = values.iter().fold(0, |a, ref b| a + 4 + b.len(version));
+                5 + preps.id.len() + values_size
         },
         _ => self.len(cl.version)
         }
@@ -306,7 +309,7 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlBlob(ref o) => match *o {
                 Some(ref b) => {
                     write_size!(buf, b.len(), bytes_size);
-                    try_io!(buf.write(b.as_slice()), "Error serializing CqlValue (Blob)");
+                    try_io!(buf.write(&b), "Error serializing CqlValue (Blob)");
                     Ok(())
                 }
                 None => Ok(())                
@@ -349,13 +352,15 @@ impl<'a> CqlSerializable<'a> for CqlValue {
                     IpAddr::Ipv4(ref ipv4) => {
                         write_size!(buf, 5, bytes_size);
                         try_bo!(buf.write_u8(4), "Error serializing CqlValue (Ipv4Addr size)");
-                        try_io!(buf.write(ipv4.octets().as_slice()), "Error serializing CqlValue (Ipv4Addr)");
+                        try_io!(buf.write(&ipv4.octets()), "Error serializing CqlValue (Ipv4Addr)");
                         Ok(())
                     },
                     IpAddr::Ipv6(ref ipv6) => {
                         write_size!(buf, 17, bytes_size);
-                        try_bo!(buf.write_u8(16u8), "Error serializing CqlValue (Ipv4Addr size)");
-                        try_io!(buf.write(view_as_bytes(ipv6.segments().as_slice())), "Error serializing CqlValue (Ipv4Addr)");
+                        try_bo!(buf.write_u8(16u8), "Error serializing CqlValue (Ipv6Addr size)");
+                        for n in ipv6.segments().iter() {
+                            try_io!(buf.write_u16::<BigEndian>(*n), "Error serializing CqlValue (Ipv6Addr)");
+                        }
                         Ok(())
                     },
                 },
@@ -531,7 +536,7 @@ impl<'a> CqlSerializable<'a> for CqlValue {
                 None => 0     
             },
             &CqlVarchar(ref o) => match *o {
-                Some(ref s) => s.as_slice().len() as usize,
+                Some(ref s) => s.len() as usize,
                 None => 0
             },
             &CqlVarint(_) => 0,

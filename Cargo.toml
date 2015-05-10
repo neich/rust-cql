@@ -14,3 +14,6 @@ git = "https://github.com/rust-lang/num"
 
 [dependencies]
 byteorder = "*"
+
+[dependencies]
+enum_primitive = "*"

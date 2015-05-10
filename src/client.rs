@@ -1,10 +1,9 @@
 extern crate std;
-extern crate core;
 extern crate num;
 extern crate uuid;
-extern crate collections;
 
 use std::collections::BTreeMap;
+use std::borrow::Cow;
 
 use super::def::*;
 use super::def::OpcodeRequest::*;
@@ -31,7 +30,7 @@ impl Client {
         Client {socket: socket, version: version, prepared: BTreeMap::new()}
     }
 
-    fn build_auth<'a>(&self, creds: &'a Vec<SendStr>, stream: i8) -> CqlRequest<'a> {
+    fn build_auth<'a>(&self, creds: &'a Vec<CowStr>, stream: i8) -> CqlRequest<'a> {
         return CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -71,7 +70,7 @@ impl Client {
         Ok(try_rc!(socket.read_cql_response(self.version), "Error reading query"))
     }
 
-    pub fn exec_prepared(&mut self, ps_id: SendStr, params: &[CqlValue], con: Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_prepared(&mut self, ps_id: CowStr, params: &[CqlValue], con: Consistency) -> RCResult<CqlResponse> {
 
         let q = CqlRequest {
             version: self.version,
@@ -151,7 +150,7 @@ impl Client {
 }
 
 
-fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Vec<SendStr>>) -> RCResult<()> {
+fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Vec<CowStr>>) -> RCResult<()> {
     let body = CqlStringMap {
         pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(version-1) as usize]}],
     };
@@ -195,14 +194,14 @@ fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Ve
     }
 }
 
-pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<SendStr>>) -> RCResult<Client> {
+pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<CowStr>>) -> RCResult<Client> {
 
     let mut version = CQL_MAX_SUPPORTED_VERSION;
 
     while version >= 0x01 {
         let res = std::net::TcpStream::connect((ip, port));
         if res.is_err() {
-            return Err(RCError::new(format!("Failed to connect to server at {}:{}", ip.as_slice(), port), ConnectionError));
+            return Err(RCError::new(format!("Failed to connect to server at {}:{}", ip, port), ConnectionError));
         }
         
         let mut socket = res.unwrap();

@@ -6,14 +6,13 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use self::uuid::Uuid;
 use std::borrow::Cow;
-use std::borrow::IntoCow;
 use std::ops::Deref;
 use std::error::Error;
 
-pub type SendStr = Cow<'static, str>;
+pub type CowStr = Cow<'static, str>;
 
 
-#[derive(ToPrimitive, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum OpcodeRequest {
     //requests
     OpcodeStartup = 0x01,
@@ -39,14 +38,15 @@ pub enum OpcodeResponse {
     OpcodeUnknown
 }
 
-#[derive(Debug)]
-#[derive(FromPrimitive)]
+enum_from_primitive! {
+#[derive(Debug, PartialEq)]
 pub enum KindResult {
     KindVoid = 0x0001,
     KindRows = 0x0002,
     KindSetKeyspace = 0x0003,
     KindPrepared = 0x0004,
     KindSchemaChange = 0x0005
+}
 }
 
 pub fn opcode_response(val: u8) -> OpcodeResponse {
@@ -73,7 +73,7 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
 }
 
 
-#[derive(ToPrimitive, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum Consistency {
     Any = 0x0000,
     One = 0x0001,
@@ -86,7 +86,7 @@ pub enum Consistency {
     Unknown,
 }
 
-#[derive(ToPrimitive, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum BatchType {
     Logged = 0x00,
     Unlogged = 0x01,
@@ -156,24 +156,27 @@ pub enum RCErrorType {
     IOError
 }
 
-#[derive(Debug, Display)]
+#[derive(Debug)]
 pub struct RCError {
     pub kind: RCErrorType,
-    pub desc: SendStr,
+    pub desc: CowStr,
 }
 
+
 impl RCError {
-    pub fn new<T: IntoCow<'static, str>>(msg: T, kind: RCErrorType) -> RCError {
+    pub fn new<S: Into<CowStr>>(msg: S, kind: RCErrorType) -> RCError {
         RCError {
             kind: kind,
-            desc: msg.into_cow()
+            desc: msg.into()
         }
     }
+
     pub fn description(&self) -> &str {
         return self.desc.deref();
     }
 
 }
+
 
 impl std::error::Error for RCError {
     fn description(&self) -> &str {
@@ -191,11 +194,13 @@ impl std::fmt::Display for RCError {
     }
 }
 
-impl std::convert::From<std::io::Error> for RCError {
-    fn from(err: std::io::Error) -> RCError {
-        RCError { kind: RCErrorType::IOError, desc: err.description().to_string().into_cow() }   
+/*
+impl<'a> std::convert::From<&'a std::io::Error> for RCError {
+    fn from(err: &'a std::io::Error) -> RCError {
+        RCError::new(Cow::Borrowed(err.description()), RCErrorType::IOError)
     }
 }
+*/
 
 pub type RCResult<T> = Result<T, RCError>;
 
@@ -227,9 +232,9 @@ pub struct CqlTableDesc {
 
 #[derive(Debug)]
 pub struct CqlColMetadata {
-    pub keyspace: SendStr,
-    pub table: SendStr,
-    pub col_name: SendStr,
+    pub keyspace: CowStr,
+    pub table: CowStr,
+    pub col_name: CowStr,
     pub col_type: CqlValueType,
     pub col_type_aux1: CqlValueType,
     pub col_type_aux2: CqlValueType
@@ -239,8 +244,8 @@ pub struct CqlColMetadata {
 pub struct CqlMetadata {
     pub flags: u32,
     pub column_count: u32,
-    pub keyspace: SendStr,
-    pub table: SendStr,
+    pub keyspace: CowStr,
+    pub table: CowStr,
     pub row_metadata: Vec<CqlColMetadata>,
 }
 
@@ -256,7 +261,7 @@ pub type CQLSet = Vec<CqlValue>;
 
 #[derive(Debug)]
 pub enum CqlValue {
-    CqlASCII(Option<SendStr>),
+    CqlASCII(Option<CowStr>),
     CqlBigInt(Option<i64>),
     CqlBlob(Option<Vec<u8>>),
     CqlBoolean(Option<bool>),
@@ -269,11 +274,11 @@ pub enum CqlValue {
     CqlList(Option<CQLList>),
     CqlMap(Option<CQLMap>),
     CqlSet(Option<CQLSet>),
-    CqlText(Option<SendStr>),
+    CqlText(Option<CowStr>),
     CqlTimestamp(Option<u64>),
     CqlUuid(Option<Uuid>),
     CqlTimeUuid(Option<Uuid>),
-    CqlVarchar(Option<SendStr>),
+    CqlVarchar(Option<CowStr>),
     CqlVarint(Option<num::BigInt>),
     CqlUnknown,
 }
@@ -315,10 +320,10 @@ pub struct CqlRequest<'a> {
 
 pub enum CqlRequestBody<'a> {
     RequestStartup(CqlStringMap),
-    RequestCred(&'a Vec<SendStr>),
+    RequestCred(&'a Vec<CowStr>),
     RequestQuery(&'a str, Consistency, u8),
     RequestPrepare(&'a str),
-    RequestExec(SendStr, &'a [CqlValue], Consistency, u8),
+    RequestExec(CowStr, &'a [CqlValue], Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
 }
@@ -334,15 +339,15 @@ pub struct CqlResponse {
 
 #[derive(Debug)]
 pub enum CqlResponseBody {
-    ResponseError(u32, SendStr),
+    ResponseError(u32, CowStr),
     ResponseReady,
-    ResponseAuth(SendStr),
+    ResponseAuth(CowStr),
 
     ResultVoid,
     ResultRows(Box<CqlRows>),
-    ResultKeyspace(SendStr),
+    ResultKeyspace(CowStr),
     ResultPrepared(Box<CqlPreparedStat>),
-    ResultSchemaChange(SendStr, SendStr, SendStr),
+    ResultSchemaChange(CowStr, CowStr, CowStr),
     ResultUnknown,
 
     ResponseEmpty,
@@ -357,8 +362,8 @@ pub struct CqlPreparedStat {
 
 
 pub enum Query {
-    QueryStr(SendStr),
-    QueryPrepared(SendStr, Vec<CqlValue>),
+    QueryStr(CowStr),
+    QueryPrepared(CowStr, Vec<CqlValue>),
     QueryBatch(Vec<Query>)
 }
 
