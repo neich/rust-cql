@@ -95,3 +95,4 @@ mod def;
 mod reader;
 mod serialize;
 pub mod client;
+pub mod async_client;

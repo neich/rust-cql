@@ -12,8 +12,12 @@ git = "https://github.com/rust-lang/uuid.git"
 
 git = "https://github.com/rust-lang/num"
 
+[dependencies.eventual]
+git = "https://github.com/carllerche/eventual"
+
 [dependencies]
 byteorder = "*"
 
 [dependencies]
 enum_primitive = "*"
+
