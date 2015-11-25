@@ -18,6 +18,7 @@ pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
 type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
 
+
 pub struct Client {
     socket: std::net::TcpStream,
     pub version: u8,
@@ -63,21 +64,22 @@ impl Client {
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeQuery,
-            body: RequestQuery(query_str, con, 0)};
+            body: RequestQuery(String::from(query_str), con, 0)};
 
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
         try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing query");
         Ok(try_rc!(socket.read_cql_response(self.version), "Error reading query"))
     }
 
-    pub fn exec_prepared(&mut self, ps_id: CowStr, params: &[CqlValue], con: Consistency) -> RCResult<CqlResponse> {
-
+    pub fn exec_prepared(&mut self, ps_id: &str, params: &Vec<CqlValue>, con: Consistency) -> RCResult<CqlResponse> {
+        let mut p = Vec::new();
+        p.clone_from(params);
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeExecute,
-            body: RequestExec(ps_id, params, con, 0x01),
+            body: RequestExec(String::from(ps_id), p, con, 0x01),
         };
 
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
