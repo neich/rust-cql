@@ -9,6 +9,7 @@
 #[macro_use] extern crate enum_primitive as ep;
 
 pub use client::connect;
+pub use async_client::connect_async;
 pub use def::Consistency;
 pub use def::BatchType;
 pub use def::CqlValue;
@@ -31,8 +32,8 @@ macro_rules! try_bo(
             Ok(val) => val,
             Err(self::byteorder::Error::UnexpectedEOF) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, "Unexpected EOF"), $crate::def::RCErrorType::IOError)),
             Err(self::byteorder::Error::Io(ref err)) => {
-            	use std::error::Error;
-            	return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+                use std::error::Error;
+                return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
             }
         };
     }
@@ -44,8 +45,8 @@ macro_rules! try_io(
         match $call {
             Ok(val) => val,
             Err(ref err) => {
-            	use std::error::Error;
-            	return Err(RCError::new(format!("{} -> {}", $msg, err.description()), RCErrorType::IOError))
+                use std::error::Error;
+                return Err(RCError::new(format!("{} -> {}", $msg, err.description()), RCErrorType::IOError))
             }
         };
     }
