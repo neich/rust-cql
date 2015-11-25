@@ -204,7 +204,7 @@ impl<'a> std::convert::From<&'a std::io::Error> for RCError {
 
 pub type RCResult<T> = Result<T, RCError>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IpAddr {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr)
@@ -249,7 +249,7 @@ pub struct CqlMetadata {
     pub row_metadata: Vec<CqlColMetadata>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pair<T, V> {
     pub key: T,
     pub value: V
@@ -259,7 +259,7 @@ pub type CQLList = Vec<CqlValue>;
 pub type CQLMap = Vec<Pair<CqlValue, CqlValue>>;
 pub type CQLSet = Vec<CqlValue>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CqlValue {
     CqlASCII(Option<CowStr>),
     CqlBigInt(Option<i64>),
@@ -321,9 +321,9 @@ pub struct CqlRequest<'a> {
 pub enum CqlRequestBody<'a> {
     RequestStartup(CqlStringMap),
     RequestCred(&'a Vec<CowStr>),
-    RequestQuery(&'a str, Consistency, u8),
+    RequestQuery(String, Consistency, u8),
     RequestPrepare(&'a str),
-    RequestExec(CowStr, &'a [CqlValue], Consistency, u8),
+    RequestExec(String, Vec<CqlValue>, Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
 }
@@ -366,7 +366,3 @@ pub enum Query {
     QueryPrepared(CowStr, Vec<CqlValue>),
     QueryBatch(Vec<Query>)
 }
-
-
-
-
