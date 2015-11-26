@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::borrow::Cow;
 use std::error::Error;
 use self::eventual::Future;
+use client::*;
 
 use super::def::*;
 use super::def::OpcodeRequest::*;
@@ -17,10 +18,10 @@ use super::serialize::CqlSerializable;
 use super::reader::*;
 
 
-pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
-pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
+//pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
+//pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
-type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
+//type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
 
 
 pub struct AsyncClient {
@@ -34,6 +35,8 @@ impl AsyncClient {
     fn new(socket: std::net::TcpStream, version: u8) -> AsyncClient {
         AsyncClient {socket: socket, version: version, prepared: BTreeMap::new()}
     }
+
+
 
     fn build_auth<'a>(&self, creds: &'a Vec<CowStr>, stream: i8) -> CqlRequest<'a> {
         return CqlRequest {
@@ -92,6 +95,8 @@ impl AsyncClient {
                 let mut p = Vec::new();
                 p.clone_from(params);
 
+                let mut client =  from(&socket,self.version,&self.prepared);
+
                 let q = CqlRequest {
                     version: self.version,
                     flags: 0x00,
@@ -99,9 +104,9 @@ impl AsyncClient {
                     opcode: OpcodeExecute,
                     body: RequestExec(String::from(ps_id), p, con, 0x01)};
 
-                eventual::Future::spawn(move || {
+                Future::spawn(move || {
                     println!("Serializing prepared query ...");
-                    match q.serialize(&mut socket, q.version) {
+                    match q.serialize_with_client(&mut socket,&mut client) {
                         Ok(_) => { println!("... Ok serialized prepared query");},
                         Err(err) => println!("Error: {:?}", err.description())
                     }
@@ -109,7 +114,7 @@ impl AsyncClient {
                     Ok(try_rc!(socket.read_cql_response(q.version), "Error reading prepared query"))
                 })
             },
-            Err(ref err) => eventual::Future::of(Err(RCError::new(format!("{} -> {}", "Cannot clone socket", err.description()), RCErrorType::IOError)))
+            Err(ref err) => Future::of(Err(RCError::new(format!("{} -> {}", "Cannot clone socket", err.description()), RCErrorType::IOError)))
         }
 
 
@@ -140,11 +145,12 @@ impl AsyncClient {
         };
         serialize_and_check_io_error!(serialize_with_client, &mut file, q, self, "Error serializing to file");
         */
+        
          match self.socket.try_clone() {
             Ok(mut socket) => {
                 //let mut p = Vec::new();
                 //p.clone_from(params);
-
+               	let mut client =  from(&socket,self.version,&self.prepared);
                  let q = CqlRequest {
 		            version: self.version,
 		            flags: 0x00,
@@ -154,7 +160,7 @@ impl AsyncClient {
 
                 eventual::Future::spawn(move || {
                     println!("Serializing prepared query ...");
-                    try_rc!(q.serialize(&mut socket, q.version), "Error serializing BATCH request");
+                    try_rc!(q.serialize_with_client(&mut socket, &mut client), "Error serializing BATCH request");
                     println!("Reading response from prepared ...");
                     Ok(try_rc!(socket.read_cql_response(q.version), "Error reading prepared query"))
                 })
