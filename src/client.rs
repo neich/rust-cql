@@ -16,7 +16,7 @@ use super::reader::*;
 pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
-type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
+pub type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
 
 
 pub struct Client {
@@ -30,6 +30,7 @@ impl Client {
     fn new(socket: std::net::TcpStream, version: u8) -> Client {
         Client {socket: socket, version: version, prepared: BTreeMap::new()}
     }
+
 
     fn build_auth<'a>(&self, creds: &'a Vec<CowStr>, stream: i8) -> CqlRequest<'a> {
         return CqlRequest {
@@ -194,6 +195,12 @@ fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Ve
         ResponseError(_, ref msg) => Err(RCError::new(format!("Error connecting: {}", msg), ReadError)),
         _ => Err(RCError::new("Wrong response to startup", ReadError))
     }
+}
+
+
+//Socket should be checked first
+pub fn from(socket: &std::net::TcpStream, version: u8,prepared: & PrepsStore) -> Client {
+    Client {socket: socket.try_clone().unwrap(), version: version, prepared: (*prepared).clone()}
 }
 
 pub fn connect(ip: &'static str, port: u16, creds:Option<&Vec<CowStr>>) -> RCResult<Client> {

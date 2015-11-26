@@ -93,7 +93,7 @@ pub enum BatchType {
     Counter = 0x02
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum CqlValueType {
     ColumnCustom = 0x0000,
     ColumnASCII = 0x0001,
@@ -230,7 +230,7 @@ pub struct CqlTableDesc {
     pub tablename: String
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct CqlColMetadata {
     pub keyspace: CowStr,
     pub table: CowStr,
@@ -240,7 +240,7 @@ pub struct CqlColMetadata {
     pub col_type_aux2: CqlValueType
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct CqlMetadata {
     pub flags: u32,
     pub column_count: u32,
@@ -353,7 +353,7 @@ pub enum CqlResponseBody {
     ResponseEmpty,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct CqlPreparedStat {
     pub id: Vec<u8>,
     pub meta: Box<CqlMetadata>,
