@@ -205,7 +205,8 @@ impl<'a> std::convert::From<&'a std::io::Error> for RCError {
 pub type RCResult<T> = Result<T, RCError>;
 
 #[derive(Debug, Clone)]
-pub enum IpAddr {
+//pub enum IpAddr before; rename because it colides with mio library
+pub enum IpAddress {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr)
 }
@@ -269,7 +270,7 @@ pub enum CqlValue {
     CqlDecimal(Option<num::BigInt>),
     CqlDouble(Option<f64>),
     CqlFloat(Option<f32>),
-    CqlInet(Option<IpAddr>),
+    CqlInet(Option<IpAddress>),
     CqlInt(Option<i32>),
     CqlList(Option<CQLList>),
     CqlMap(Option<CQLMap>),
