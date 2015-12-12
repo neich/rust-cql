@@ -23,12 +23,9 @@ use std::error::Error;
 use ep::FromPrimitive;
 
 pub trait CqlReader {
-    fn read_exact(&mut self, n: u64) -> RCResult<Vec<u8>>;
-
-    fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32>;
-
-    fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: i32) -> RCResult<i32>;
     fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>>;
+    fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32>;
+    fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: i32) -> RCResult<i32>;
 
     fn read_cql_str(&mut self, val_type: CqlBytesSize) -> RCResult<Option<CowStr>>;
     fn read_cql_f32(&mut self, val_type: CqlBytesSize) -> RCResult<Option<f32>>;
@@ -39,7 +36,7 @@ pub trait CqlReader {
     fn read_cql_blob(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Vec<u8>>>;
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>>;
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>>;
+    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLList>>;
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLSet>>;
@@ -59,10 +56,19 @@ pub trait CqlReader {
 
 
 impl<T: std::io::Read> CqlReader for T {
-    fn read_exact(&mut self, n: u64) -> RCResult<Vec<u8>> {
-        let mut buf = vec![];
-        try_io!(std::io::copy(&mut self.take(n), &mut buf), "Error at read_exact");
-        Ok(buf)
+    fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
+        let len:i32 = match val_type {
+            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length"),
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as i32
+        }; 
+
+        if len < 0 {
+            Ok(vec![])
+        } else {
+            let mut buf = Vec::with_capacity(len as usize);
+            try_io!(std::io::copy(&mut self.take(len as u64), &mut buf), "Error at read_exact");
+            Ok(buf)
+        }
     }
 
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32> {
@@ -84,19 +90,8 @@ impl<T: std::io::Read> CqlReader for T {
         }    
     }
 
-
-    fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
-        let len = try_rc!(self.read_cql_bytes_length(val_type), "Error reading bytes length");
-        if len <= 0 {
-            Ok(vec![])
-        } else {
-            Ok(try_rc!(self.read_exact(len as u64), "Error reading bytes data"))
-        }
-    }
-
     fn read_cql_str(&mut self, val_type: CqlBytesSize) -> RCResult<Option<CowStr>> {
-        let len = try_rc_length!(self.read_cql_bytes_length(val_type), "Error reading string length");
-        let vec_u8 = try_rc!(self.read_exact(len as u64), "Error reading string data");
+        let vec_u8 = try_rc!(self.read_cql_bytes(val_type), "Error reading string data");
         match std::str::from_utf8(&vec_u8) {
             Ok(s) => Ok(Some(Cow::Owned(s.to_owned()))),
             Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", RCErrorType::ReadError))
@@ -130,7 +125,7 @@ impl<T: std::io::Read> CqlReader for T {
     
     fn read_cql_blob(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Vec<u8>>> {
         let len = try_rc_length!(self.read_cql_bytes_length(val_type), "Error reading blob length");
-        Ok(Some(try_rc!(self.read_exact(len as u64), "Error reading string data")))
+        Ok(Some(try_rc!(self.read_cql_bytes(val_type), "Error reading string data")))
     }
 
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>> {
@@ -146,20 +141,21 @@ impl<T: std::io::Read> CqlReader for T {
         if len != 16 {
             return Err(RCError::new("Invalid uuid length", RCErrorType::ReadError))  
         }
-        let vec_u8 = try_rc!(self.read_exact(len as u64), "Error reading uuid data");
+        let vec_u8 = try_rc!(self.read_cql_bytes(val_type), "Error reading uuid data");
         match Uuid::from_bytes(&vec_u8) {
             Some(u) => Ok(Some(u)),
             None => Err(RCError::new("Invalid uuid", RCErrorType::ReadError))
         }      
     }
 
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>> {
-        let len = try_rc_length!(self.read_cql_bytes_length(val_type), "Error reading value length");
-        let vec = try_rc!(self.read_exact(len as u64), "Error reading value data");
-        if len == 4 {
-            Ok(Some(IpAddr::Ipv4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3]))))
+    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>> {
+        let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
+        if vec.len() == 0 {
+            Ok(None)
+        } else if vec.len() == 4 {
+            Ok(Some(IpAddress::Ipv4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3]))))
         } else {
-            Ok(Some(IpAddr::Ipv6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
+            Ok(Some(IpAddress::Ipv6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
               vec[3] as u16 + ((vec[2] as u16) << 8),
               vec[5] as u16 + ((vec[4] as u16) << 8),
               vec[7] as u16 + ((vec[6] as u16) << 8),
@@ -174,7 +170,7 @@ impl<T: std::io::Read> CqlReader for T {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
         let len = try_bo!(self.read_i16::<BigEndian>(), "Error reading list length");
         let mut list: CQLList = vec![];
-        for _ in (0 .. len) {
+        for _ in 0 .. len {
             let col = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux1), "Error reading list value");
             list.push(col);
         }
@@ -185,7 +181,7 @@ impl<T: std::io::Read> CqlReader for T {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading set size");
         let len = try_bo!(self.read_i16::<BigEndian>(), "Error reading set length");
         let mut set: CQLSet = vec![];
-        for _ in (0 .. len) {
+        for _ in 0 .. len {
             let col = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux1), "Error reading set value");
             set.push(col);
         }
@@ -196,7 +192,7 @@ impl<T: std::io::Read> CqlReader for T {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading map size");
         let len = try_bo!(self.read_i16::<BigEndian>(), "Error reading map length");
         let mut map: CQLMap = vec![];
-        for _ in (0 .. len) {
+        for _ in 0 .. len {
             let key = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux1), "Error reading map key");
             let value = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux2), "Error reading map value");
             map.push(Pair { key: key, value: value});
@@ -206,7 +202,7 @@ impl<T: std::io::Read> CqlReader for T {
 
     fn read_cql_skip(&mut self, val_type: CqlBytesSize) -> RCResult<()> {
         let len = try_rc!(self.read_cql_bytes_length(val_type), "Error reading value length");
-        try_rc!(self.read_exact(len as u64), "Error reading value data");
+        try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
         Ok(())     
     }
 
@@ -224,7 +220,7 @@ impl<T: std::io::Read> CqlReader for T {
         };
 
         let mut row_metadata:Vec<CqlColMetadata> = vec![];
-        for _ in (0u32 .. column_count) {
+        for _ in 0u32 .. column_count {
             let (keyspace, table) =
             if flags & 0x0001 != 0 {
                 (ks.clone(), tb.clone())
@@ -350,7 +346,7 @@ impl<T: std::io::Read> CqlReader for T {
         let rows_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading metadata");
 
         let mut rows:Vec<CqlRow> = vec![];
-        for _ in (0u32..rows_count) {
+        for _ in 0u32..rows_count {
             let mut row = CqlRow{ cols: vec![] };
             for meta in metadata.row_metadata.iter() {
                 let col = try_rc!(self.read_cql_column_value(meta), "Error reading column value");
@@ -366,19 +362,16 @@ impl<T: std::io::Read> CqlReader for T {
     }
 
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse> {
-        let header_data = try_rc!(self.read_exact(4), "Error reading response header");
+        let mut header_data = [0; 4];
+        try_rc!(self.take(4).read(&mut header_data), "Error reading response header");
 
         let version_header = header_data[0];
         let flags = header_data[1];
         let stream = header_data[2] as i8;
         let opcode = opcode_response(header_data[3]);
 
-        let length = try_bo!(self.read_i32::<BigEndian>(), "Error reading length response");
-
-        let body_data = try_rc!(self.read_exact(length as u64), "Error reading body response");
-
-        // Code to debug response result. It writes teh response's body to a file for inspecting.
-
+        let body_data = try_rc!(self.read_cql_bytes(CqlBytesSize::Cqli32), "Error reading body response");
+        // Code to debug response result. It writes the response's body to a file for inspecting.
         let path = Path::new("body_data.bin");
         let display = path.display();
 
@@ -456,9 +449,3 @@ impl<T: std::io::Read> CqlReader for T {
         })
     }
 }
-
-
-
-
-
-
