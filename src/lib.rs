@@ -6,11 +6,9 @@
 // #![feature(custom_derive, core, into_cow, convert, collections)]
 // #![feature(custom_derive)]
 
-
 #[macro_use] extern crate enum_primitive as ep;
 
 pub use client::connect;
-//pub use client_old::connect;
 pub use def::Consistency;
 pub use def::BatchType;
 pub use def::CqlValue;
@@ -96,5 +94,4 @@ macro_rules! CowStr_tuple_void(
 mod def;
 mod reader;
 mod serialize;
-//pub mod client_old;
 pub mod client;
