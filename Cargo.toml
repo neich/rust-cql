@@ -1,8 +1,8 @@
 [package]
 
 name = "cql"
-version = "0.0.1"
-authors = ["Ignacio Martín <natx.mc@gmail.com>"]
+version = "0.0.2"
+authors = ["Ignacio Martín <natx.mc@gmail.com>","Álvaro Berruezo <alvaroberruezo@gmail.com>"]
 
 [dependencies.uuid]
 
@@ -15,9 +15,10 @@ git = "https://github.com/rust-lang/num"
 [dependencies.eventual]
 git = "https://github.com/carllerche/eventual"
 
-[dependencies]
-byteorder = "*"
 
 [dependencies]
+byteorder = "*"
 enum_primitive = "*"
+
+
 
