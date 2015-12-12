@@ -9,7 +9,6 @@
 #[macro_use] extern crate enum_primitive as ep;
 
 pub use client::connect;
-pub use async_client::connect_async;
 pub use def::Consistency;
 pub use def::BatchType;
 pub use def::CqlValue;
@@ -96,4 +95,3 @@ mod def;
 mod reader;
 mod serialize;
 pub mod client;
-pub mod async_client;
