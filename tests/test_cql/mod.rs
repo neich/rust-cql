@@ -4,6 +4,13 @@ use std::borrow::Cow;
 use std::io::Write;
 use cql;
 
+pub fn to_hex_string(bytes: Vec<u8>) -> String {
+  let strs: Vec<String> = bytes.iter()
+                               .map(|b| format!("{:02X}", b))
+                               .collect();
+  strs.connect(" ")
+}
+
 #[test]
 fn test() {
     println!("Connecting ...!");
@@ -37,6 +44,7 @@ fn test() {
     q = "insert into rust.test (id, f32) values (?, ?)";
     println!("Create prepared: {}", q);
     let res_id = try_test!(client.prepared_statement(q, "test"), "Error creating prepared statement");
+    println!("Created prepared with id = {}", to_hex_string(res_id));
 
     println!("Execute prepared");
     let params: &[cql::CqlValue] = &[cql::CqlVarchar(Some(Cow::Borrowed("ttrwe"))), cql::CqlFloat(Some(15.1617))];
