@@ -16,7 +16,11 @@ git = "https://github.com/rust-lang/num"
 git = "https://github.com/carllerche/eventual"
 
 
+[dependencies.bytes]
+git = "https://github.com/carllerche/bytes"
+
 [dependencies]
+mio = "0.4.0"
 byteorder = "*"
 enum_primitive = "*"
 
