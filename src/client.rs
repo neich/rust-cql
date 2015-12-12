@@ -4,6 +4,8 @@ extern crate uuid;
 
 use std::collections::BTreeMap;
 use std::borrow::Cow;
+use std::path::Path;
+use std::error::Error;
 
 use super::def::*;
 use super::def::OpcodeRequest::*;
@@ -83,18 +85,14 @@ impl Client {
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
         try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing prepared statement execution");
 
-        /* Code to debug prepared statements. Write to file the serialization of the request
-
-        let path = Path::new("prepared_data.bin");
-        let display = path.display();
-        let mut file = match std::old_io::File::create(&path) {
-            Err(why) => fail!("couldn't create {}: {}", display, why.desc),
-            Ok(file) => file,
-        };
-
-        serialize_and_check_io_error!(&mut file, q, self.version, "Error serializing query");
-        
-        */
+        // Code to debug prepared statements. Write to file the serialization of the request
+        // let path = Path::new("prepared_data.bin");
+        // let display = path.display();
+        // let mut file = match std::fs::File::create(&path) {
+        //     Err(err) => panic!("couldn't create {}: {}", display, err.description()),
+        //     Ok(file) => file,
+        // };
+        // try_rc!(q.serialize_with_client(&mut file, self), "Error serializing query to file");
 
         Ok(try_rc!(socket.read_cql_response(self.version), "Error reading prepared statement execution result"))
     }
@@ -126,7 +124,7 @@ impl Client {
     }
 
 
-    pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<()> {
+    pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<Vec<u8>> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -141,8 +139,9 @@ impl Client {
         let res = try_rc!(socket.read_cql_response(self.version), "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
+                let id = preps.id.clone();
                 self.prepared.insert(query_id.to_string(), preps);
-                Ok(())
+                Ok(id)
             },
             _ => Err(RCError::new("Response does not contain prepared statement", ReadError))
         }
