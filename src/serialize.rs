@@ -15,6 +15,7 @@ use super::def::RCErrorType::*;
 use super::def::Query::*;
 use super::def::CqlValue::*;
 use super::client::Client;
+//use super::client_old::Client;
 
 // From
 // http://stackoverflow.com/questions/26714984/rust-how-to-borrow-an-immutable-view-slice-to-a-vector-as-octets
