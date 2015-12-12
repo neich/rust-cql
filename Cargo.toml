@@ -1,7 +1,7 @@
 [package]
 
 name = "cql"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Ignacio Martín <natx.mc@gmail.com>"]
 
 [dependencies.uuid]
