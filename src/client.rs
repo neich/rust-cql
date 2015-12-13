@@ -68,31 +68,31 @@ impl Client {
             body: RequestQuery(query_str, con, 0)};
 
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
-        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing query");
+        try_rc!(q.serialize(&mut socket, self.version), "Error serializing query");
         Ok(try_rc!(socket.read_cql_response(self.version), "Error reading query"))
     }
 
-    pub fn exec_prepared(&mut self, ps_id: CowStr, params: &[CqlValue], con: Consistency) -> RCResult<CqlResponse> {
+    pub fn exec_prepared(&mut self, preps: &Vec<u8>, params: &[CqlValue], con: Consistency) -> RCResult<CqlResponse> {
 
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeExecute,
-            body: RequestExec(ps_id, params, con, 0x01),
+            body: RequestExec(preps.clone(), params, con, 0x01),
         };
 
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
-        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing prepared statement execution");
+        try_rc!(q.serialize(&mut socket, self.version), "Error serializing prepared statement execution");
 
         // Code to debug prepared statements. Write to file the serialization of the request
-        // let path = Path::new("prepared_data.bin");
-        // let display = path.display();
-        // let mut file = match std::fs::File::create(&path) {
-        //     Err(err) => panic!("couldn't create {}: {}", display, err.description()),
-        //     Ok(file) => file,
-        // };
-        // try_rc!(q.serialize_with_client(&mut file, self), "Error serializing query to file");
+        let path = Path::new("prepared_data.bin");
+        let display = path.display();
+        let mut file = match std::fs::File::create(&path) {
+            Err(err) => panic!("couldn't create {}: {}", display, err.description()),
+            Ok(file) => file,
+        };
+        try_rc!(q.serialize(&mut file, self.version), "Error serializing query to file");
 
         Ok(try_rc!(socket.read_cql_response(self.version), "Error reading prepared statement execution result"))
     }
@@ -118,13 +118,13 @@ impl Client {
         */
 
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
-        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing BATCH request");
+        try_rc!(q.serialize(&mut socket, self.version), "Error serializing BATCH request");
         let res = try_rc!(socket.read_cql_response(self.version), "Error reading query");
         Ok(res)
     }
 
 
-    pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<Vec<u8>> {
+    pub fn prepared_statement(&mut self, query_str: &str) -> RCResult<CqlPreparedStat> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -134,14 +134,12 @@ impl Client {
         };
 
         let mut socket = try_io!(self.socket.try_clone(), "Cannot clone tcp handle");
-        try_rc!(q.serialize_with_client(&mut socket, self), "Error serializing prepared statement");
+        try_rc!(q.serialize(&mut socket, self.version), "Error serializing prepared statement");
 
         let res = try_rc!(socket.read_cql_response(self.version), "Error reading query");
         match res.body {
             ResultPrepared(preps) => {
-                let id = preps.id.clone();
-                self.prepared.insert(query_id.to_string(), preps);
-                Ok(id)
+                Ok(preps)
             },
             _ => Err(RCError::new("Response does not contain prepared statement", ReadError))
         }

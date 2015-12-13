@@ -42,9 +42,9 @@ pub trait CqlReader {
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLSet>>;
     fn read_cql_map(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLMap>>;
 
-    fn read_cql_metadata(&mut self) -> RCResult<Box<CqlMetadata>>;
+    fn read_cql_metadata(&mut self) -> RCResult<CqlMetadata>;
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse>;
-    fn read_cql_rows(&mut self) -> RCResult<Box<CqlRows>>;
+    fn read_cql_rows(&mut self) -> RCResult<CqlRows>;
 
     fn read_cql_skip(&mut self, val_type: CqlBytesSize) -> RCResult<()>;
 
@@ -206,7 +206,7 @@ impl<T: std::io::Read> CqlReader for T {
         Ok(())     
     }
 
-    fn read_cql_metadata(&mut self) -> RCResult<Box<CqlMetadata>> {
+    fn read_cql_metadata(&mut self) -> RCResult<CqlMetadata> {
         let flags = try_bo!(self.read_u32::<BigEndian>(), "Error reading flags");
         let column_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading column count");
 
@@ -256,13 +256,13 @@ impl<T: std::io::Read> CqlReader for T {
             });
         }
 
-        Ok(Box::new(CqlMetadata {
+        Ok(CqlMetadata {
             flags: flags,
             column_count: column_count,
             keyspace: ks,
             table: tb,
             row_metadata: row_metadata,
-        }))
+        })
     }
 
     fn read_cql_column_value(&mut self, col_meta: &CqlColMetadata) -> RCResult<CqlValue> {
@@ -341,7 +341,7 @@ impl<T: std::io::Read> CqlReader for T {
     }
 
 
-    fn read_cql_rows(&mut self) -> RCResult<Box<CqlRows>> {
+    fn read_cql_rows(&mut self) -> RCResult<CqlRows> {
         let metadata = try_rc!(self.read_cql_metadata(), "Error reading metadata");
         let rows_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading metadata");
 
@@ -355,15 +355,18 @@ impl<T: std::io::Read> CqlReader for T {
             rows.push(row);
         }
 
-        Ok(Box::new(CqlRows {
+        Ok(CqlRows {
             metadata: metadata,
             rows: rows,
-        }))
+        })
     }
 
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse> {
+
         let mut header_data = [0; 4];
         try_rc!(self.take(4).read(&mut header_data), "Error reading response header");
+
+        println!("Extracting header");
 
         let version_header = header_data[0];
         let flags = header_data[1];
@@ -403,6 +406,7 @@ impl<T: std::io::Read> CqlReader for T {
                 ResponseError(code, msg)
             },
             OpcodeResult => {
+                println!("We got a result ...");
                 let kind = KindResult::from_u32(try_bo!(reader.read_u32::<BigEndian>(), "Error reading result kind"));
                 match kind {
                     Some(KindVoid) => {
@@ -429,8 +433,7 @@ impl<T: std::io::Read> CqlReader for T {
                         } else {
                             None
                         };
-                        let preps = Box::new(CqlPreparedStat { id: id, meta: metadata, meta_result: meta_result});
-                        ResultPrepared(preps)
+                        ResultPrepared(CqlPreparedStat { id: id, meta: metadata, meta_result: meta_result})
                     }
                     None => return Err(RCError::new("Error reading response body (unknow result kind)", ReadError))
                 }

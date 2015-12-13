@@ -306,7 +306,7 @@ impl CqlRow {
 
 #[derive(Debug)]
 pub struct CqlRows {
-    pub metadata: Box<CqlMetadata>,
+    pub metadata: CqlMetadata,
     pub rows: Vec<CqlRow>,
 }
 
@@ -323,7 +323,7 @@ pub enum CqlRequestBody<'a> {
     RequestCred(&'a Vec<CowStr>),
     RequestQuery(&'a str, Consistency, u8),
     RequestPrepare(&'a str),
-    RequestExec(CowStr, &'a [CqlValue], Consistency, u8),
+    RequestExec(Vec<u8>, &'a [CqlValue], Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
 }
@@ -344,9 +344,9 @@ pub enum CqlResponseBody {
     ResponseAuth(CowStr),
 
     ResultVoid,
-    ResultRows(Box<CqlRows>),
+    ResultRows(CqlRows),
     ResultKeyspace(CowStr),
-    ResultPrepared(Box<CqlPreparedStat>),
+    ResultPrepared(CqlPreparedStat),
     ResultSchemaChange(CowStr, CowStr, CowStr),
     ResultUnknown,
 
@@ -356,14 +356,14 @@ pub enum CqlResponseBody {
 #[derive(Debug)]
 pub struct CqlPreparedStat {
     pub id: Vec<u8>,
-    pub meta: Box<CqlMetadata>,
-    pub meta_result: Option<Box<CqlMetadata>>
+    pub meta: CqlMetadata,
+    pub meta_result: Option<CqlMetadata>
 }
 
 
 pub enum Query {
     QueryStr(CowStr),
-    QueryPrepared(CowStr, Vec<CqlValue>),
+    QueryPrepared(Vec<u8>, Vec<CqlValue>),
     QueryBatch(Vec<Query>)
 }
 

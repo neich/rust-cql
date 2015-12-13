@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::io::Write;
 use cql;
 
-pub fn to_hex_string(bytes: Vec<u8>) -> String {
+pub fn to_hex_string(bytes: &Vec<u8>) -> String {
   let strs: Vec<String> = bytes.iter()
                                .map(|b| format!("{:02X}", b))
                                .collect();
@@ -43,12 +43,12 @@ fn test() {
 
     q = "insert into rust.test (id, f32) values (?, ?)";
     println!("Create prepared: {}", q);
-    let res_id = try_test!(client.prepared_statement(q, "test"), "Error creating prepared statement");
-    println!("Created prepared with id = {}", to_hex_string(res_id));
+    let preps = try_test!(client.prepared_statement(q), "Error creating prepared statement");
+    println!("Created prepared with id = {}", to_hex_string(&preps.id));
 
     println!("Execute prepared");
     let params: &[cql::CqlValue] = &[cql::CqlVarchar(Some(Cow::Borrowed("ttrwe"))), cql::CqlFloat(Some(15.1617))];
-    response = try_test!(client.exec_prepared(Cow::Borrowed("test"), params, cql::Consistency::One), "Error executing prepared statement");
+    response = try_test!(client.exec_prepared(&preps.id, params, cql::Consistency::One), "Error executing prepared statement");
     assert_response!(response);
     println!("Result: {:?} \n", response);
 
@@ -61,7 +61,7 @@ fn test() {
     println!("Execute batch");
     let params2: Vec<cql::CqlValue> = vec![cql::CqlVarchar(Some(Cow::Borrowed("batch2"))), cql::CqlFloat(Some(666.65))];
     let q_vec = vec![cql::QueryStr(Cow::Borrowed("insert into rust.test (id, f32) values ('batch1', 34.56)")),
-                     cql::QueryPrepared(Cow::Borrowed("test"), params2)];
+                     cql::QueryPrepared(preps.id, params2)];
     response = try_test!(client.exec_batch(cql::BatchType::Logged, q_vec, cql::Consistency::One), "Error executing batch cql::Query");
     assert_response!(response);
     println!("Result: {:?} \n", response);
