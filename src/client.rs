@@ -161,7 +161,7 @@ fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Ve
 
     try_rc!(msg_startup.serialize(socket, version), "Error serializing startup message");
 
-    let response = try_rc!(socket.read_cql_response(version), "Error reding response");
+    let response = try_rc!(socket.read_cql_response(version), "Error reading response");
     match response.body {
         ResponseReady =>  Ok(()),
         ResponseAuth(_) => {
@@ -176,7 +176,7 @@ fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Ve
                     };
                     try_rc!(msg_auth.serialize(socket, version), "Error serializing request (auth)");
                     
-                    let response = try_rc!(socket.read_cql_response(version), "Error reding authenticaton response");
+                    let response = try_rc!(socket.read_cql_response(version), "Error reading authenticaton response");
                     match response.body {
                         ResponseReady => Ok(()),
                         ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
