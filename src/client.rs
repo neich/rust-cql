@@ -32,7 +32,7 @@ impl Client {
         Client {socket: socket, version: version, prepared: BTreeMap::new()}
     }
 
-    fn build_auth<'a>(&self, creds: &'a Vec<CowStr>, stream: i8) -> CqlRequest<'a> {
+    fn build_auth<'a>(&self, creds: &'a Vec<CowStr>, stream: i16) -> CqlRequest<'a> {
         return CqlRequest {
             version: self.version,
             flags: 0x00,

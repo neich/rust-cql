@@ -86,10 +86,14 @@ impl<'a> CqlSerializable<'a> for CqlStringMap {
     }
 }
 
-fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, stream: &i8, opcode: &u8, len: &u32) -> RCResult<()> {
+fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, stream: &i16, opcode: &u8, len: &u32) -> RCResult<()> {
     try_bo!(buf.write_u8(*version), "Error serializing CqlRequest (version)");
     try_bo!(buf.write_u8(*flags), "Error serializing CqlRequest (flags)");
-    try_bo!(buf.write_i8(*stream), "Error serializing CqlRequest (stream)");
+    if *version >= 3 {
+        try_bo!(buf.write_i16::<BigEndian>(*stream), "Error serializing CqlRequest (stream)");
+    } else {
+        try_bo!(buf.write_i8(*stream as i8), "Error serializing CqlRequest (stream)");
+    }
     try_bo!(buf.write_u8(*opcode), "Error serializing CqlRequest (opcode)");
     try_bo!(buf.write_u32::<BigEndian>(*len), "Error serializing CqlRequest (length)");
     Ok(())

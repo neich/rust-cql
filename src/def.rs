@@ -38,6 +38,14 @@ pub enum OpcodeResponse {
     OpcodeUnknown
 }
 
+#[derive(Debug)]
+pub struct CqlFrameHeader {
+    pub version: u8,
+    pub flags: u8,
+    pub stream: i16,
+    pub opcode: u8,
+}
+
 enum_from_primitive! {
 #[derive(Debug, PartialEq)]
 pub enum KindResult {
@@ -313,7 +321,7 @@ pub struct CqlRows {
 pub struct CqlRequest<'a> {
     pub version: u8,
     pub flags: u8,
-    pub stream: i8,
+    pub stream: i16,
     pub opcode: OpcodeRequest,
     pub body: CqlRequestBody<'a>,
 }
@@ -332,7 +340,7 @@ pub enum CqlRequestBody<'a> {
 pub struct CqlResponse {
     pub version: u8,
     pub flags: u8,
-    pub stream: i8,
+    pub stream: i16,
     pub opcode: OpcodeResponse,
     pub body: CqlResponseBody,
 }
