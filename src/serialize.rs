@@ -182,6 +182,9 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 try_bo!(buf.write_u16::<BigEndian>(q_vec.len() as u16), "Error serializing BATCH request (number of requests)");
                 q_vec.iter().all(|r| { r.serialize(buf, version); true });
                 try_bo!(buf.write_u16::<BigEndian>(*con as u16), "Error serializing BATCH request (consistency)");
+                if version >= 3 {
+                    try_bo!(buf.write_u8(0 as u8), "Error serializing BATCH request (flags)");
+                }
                 Ok(())
             },
             RequestStartup(ref map) => {
@@ -243,7 +246,11 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
             },
             RequestBatch(ref q_vec, ref r_type, ref con, flags) => {
                 let q_vec_size:usize = q_vec.iter().fold(0, |a, ref b| a + b.len(version));
-                3 + q_vec_size + 2
+                if version >= 3 {
+                    3 + q_vec_size + 3
+                } else {
+                    3 + q_vec_size + 2
+                }
             },
             _ => 0
         }
