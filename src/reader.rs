@@ -43,6 +43,7 @@ pub trait CqlReader {
     fn read_cql_map(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLMap>>;
 
     fn read_cql_metadata(&mut self) -> RCResult<CqlMetadata>;
+    fn read_cql_frame_header(&mut self, version: u8) -> RCResult<CqlFrameHeader>;
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse>;
     fn read_cql_rows(&mut self) -> RCResult<CqlRows>;
 
@@ -361,17 +362,40 @@ impl<T: std::io::Read> CqlReader for T {
         })
     }
 
+    fn read_cql_frame_header(&mut self, version: u8) -> RCResult<CqlFrameHeader> {
+        if version >= 3 {
+            let mut header_data = [0; 5];
+            try_rc!(self.take(5).read(&mut header_data), "Error reading response header");
+           
+            let version_header = header_data[0];
+            let flags = header_data[1];
+            let stream = (header_data[2] as u16 + ((header_data[3] as u16) << 8)) as i16;
+            let opcode = header_data[4];
+            Ok(CqlFrameHeader{
+                version: version_header,
+                flags: flags,
+                stream: stream,
+                opcode: opcode,
+            })
+        } else {
+            let mut header_data = [0; 4];
+            try_rc!(self.take(4).read(&mut header_data), "Error reading response header");
+           
+            let version_header = header_data[0];
+            let flags = header_data[1];
+            let stream = header_data[2] as i16;
+            let opcode = header_data[3];
+            Ok(CqlFrameHeader{
+                version: version_header,
+                flags: flags,
+                stream: stream,
+                opcode: opcode,
+            })
+        }
+    }
+
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse> {
-
-        let mut header_data = [0; 4];
-        try_rc!(self.take(4).read(&mut header_data), "Error reading response header");
-
-        println!("Extracting header");
-
-        let version_header = header_data[0];
-        let flags = header_data[1];
-        let stream = header_data[2] as i8;
-        let opcode = opcode_response(header_data[3]);
+        let header = try_rc!(self.read_cql_frame_header(version), "Error reading CQL frame header");
 
         let body_data = try_rc!(self.read_cql_bytes(CqlBytesSize::Cqli32), "Error reading body response");
         // Code to debug response result. It writes the response's body to a file for inspecting.
@@ -394,6 +418,8 @@ impl<T: std::io::Read> CqlReader for T {
         //
 
         let mut reader = std::io::BufReader::new(Cursor::new(body_data));
+
+        let opcode = opcode_response(header.opcode);
 
         let body = match opcode {
             OpcodeReady => ResponseReady,
@@ -444,9 +470,9 @@ impl<T: std::io::Read> CqlReader for T {
         };
 
         Ok(CqlResponse {
-            version: version_header,
-            flags: flags,
-            stream: stream,
+            version: header.version,
+            flags: header.flags,
+            stream: header.stream,
             opcode: opcode,
             body: body,
         })

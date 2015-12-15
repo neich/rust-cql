@@ -86,10 +86,14 @@ impl<'a> CqlSerializable<'a> for CqlStringMap {
     }
 }
 
-fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, stream: &i8, opcode: &u8, len: &u32) -> RCResult<()> {
+fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, stream: &i16, opcode: &u8, len: &u32) -> RCResult<()> {
     try_bo!(buf.write_u8(*version), "Error serializing CqlRequest (version)");
     try_bo!(buf.write_u8(*flags), "Error serializing CqlRequest (flags)");
-    try_bo!(buf.write_i8(*stream), "Error serializing CqlRequest (stream)");
+    if *version >= 3 {
+        try_bo!(buf.write_i16::<BigEndian>(*stream), "Error serializing CqlRequest (stream)");
+    } else {
+        try_bo!(buf.write_i8(*stream as i8), "Error serializing CqlRequest (stream)");
+    }
     try_bo!(buf.write_u8(*opcode), "Error serializing CqlRequest (opcode)");
     try_bo!(buf.write_u32::<BigEndian>(*len), "Error serializing CqlRequest (length)");
     Ok(())
@@ -178,6 +182,9 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 try_bo!(buf.write_u16::<BigEndian>(q_vec.len() as u16), "Error serializing BATCH request (number of requests)");
                 q_vec.iter().all(|r| { r.serialize(buf, version); true });
                 try_bo!(buf.write_u16::<BigEndian>(*con as u16), "Error serializing BATCH request (consistency)");
+                if version >= 3 {
+                    try_bo!(buf.write_u8(0 as u8), "Error serializing BATCH request (flags)");
+                }
                 Ok(())
             },
             RequestStartup(ref map) => {
@@ -239,7 +246,11 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
             },
             RequestBatch(ref q_vec, ref r_type, ref con, flags) => {
                 let q_vec_size:usize = q_vec.iter().fold(0, |a, ref b| a + b.len(version));
-                3 + q_vec_size + 2
+                if version >= 3 {
+                    3 + q_vec_size + 3
+                } else {
+                    3 + q_vec_size + 2
+                }
             },
             _ => 0
         }
