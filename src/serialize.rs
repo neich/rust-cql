@@ -144,6 +144,12 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                 try_io!(buf.write(query_str.as_bytes()), "Error serializing CqlRequest (query)");
                 Ok(())               
             },
+            RequestAuthResponse(ref token) => {
+                let len_str = token.len() as u32;
+                try_bo!(buf.write_u32::<BigEndian>(len_str), "Error serializing CqlRequest (token length)");
+                try_io!(buf.write(token), "Error serializing CqlRequest (token)");
+                Ok(())
+            },
             _ => Ok(())
         }
     }
@@ -169,6 +175,9 @@ impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
                     3 + q_vec_size + 2
                 }
             },
+            RequestAuthResponse(ref token) => {
+                4 + token.len()
+            }
             _ => 0
         }
     }

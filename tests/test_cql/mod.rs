@@ -14,7 +14,8 @@ pub fn to_hex_string(bytes: &Vec<u8>) -> String {
 #[test]
 fn test() {
     println!("Connecting ...!");
-    let mut client = try_test!(cql::connect("127.0.0.1", 9042, None), "Error connecting to server at 127.0.0.1:9042");
+    let creds = vec![Cow::Borrowed("cassandra"), Cow::Borrowed("cassandra")];
+    let mut client = try_test!(cql::connect("127.0.0.1", 9042, Some(&creds)), "Error connecting to server at 127.0.0.1:9042");
     println!("Connected with CQL binary version v{}", client.version);
 
     let mut q = "create keyspace if not exists rust with replication = {'class': 'SimpleStrategy', 'replication_factor':1}";

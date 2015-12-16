@@ -424,7 +424,7 @@ impl<T: std::io::Read> CqlReader for T {
         let body = match opcode {
             OpcodeReady => ResponseReady,
             OpcodeAuthenticate => {
-                ResponseAuth(try_rc_noption!(reader.read_cql_str(CqlBytesSize::Cqli16), "Error reading ResponseAuth"))
+                ResponseAuthenticate(try_rc_noption!(reader.read_cql_str(CqlBytesSize::Cqli16), "Error reading ResponseAuthenticate"))
             }
             OpcodeError => {
                 let code = try_bo!(reader.read_u32::<BigEndian>(), "Error reading error code");
@@ -463,6 +463,12 @@ impl<T: std::io::Read> CqlReader for T {
                     }
                     None => return Err(RCError::new("Error reading response body (unknow result kind)", ReadError))
                 }
+            }
+            OpcodeAuthChallenge => {
+                ResponseAuthChallenge(try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading ResponseAuthChallenge"))
+            }
+            OpcodeAuthSuccess => {
+                ResponseAuthSuccess(try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading ResponseAuthSuccess"))
             }
             _ => {
                 ResultUnknown

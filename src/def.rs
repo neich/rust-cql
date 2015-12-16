@@ -15,13 +15,13 @@ pub type CowStr = Cow<'static, str>;
 #[derive(Clone, Copy)]
 pub enum OpcodeRequest {
     OpcodeStartup = 0x01,
-    OpcodeCredentials = 0x04,
     OpcodeOptions = 0x05,
     OpcodeQuery = 0x07,
     OpcodePrepare = 0x09,
     OpcodeExecute = 0x0A,
     OpcodeRegister = 0x0B,
-    OpcodeBatch = 0x0D
+    OpcodeBatch = 0x0D,
+    OpcodeAuthResponse = 0x0F,
 }
 
 #[derive(Debug)]
@@ -32,6 +32,8 @@ pub enum OpcodeResponse {
     OpcodeSupported = 0x06,
     OpcodeResult = 0x08,
     OpcodeEvent = 0x0C,
+    OpcodeAuthChallenge = 0x0E,
+    OpcodeAuthSuccess = 0x10,
 
     OpcodeUnknown
 }
@@ -63,6 +65,8 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
         0x06 => OpcodeResponse::OpcodeSupported,
         0x08 => OpcodeResponse::OpcodeResult,
         0x0C => OpcodeResponse::OpcodeEvent,
+        0x0E => OpcodeResponse::OpcodeAuthChallenge,
+        0x10 => OpcodeResponse::OpcodeAuthSuccess,
 
         _ => OpcodeResponse::OpcodeUnknown
     }
@@ -292,12 +296,12 @@ pub struct CqlRequest<'a> {
 
 pub enum CqlRequestBody<'a> {
     RequestStartup(CqlStringMap),
-    RequestCred(&'a Vec<CowStr>),
     RequestQuery(&'a str, Consistency, u8),
     RequestPrepare(&'a str),
     RequestExec(Vec<u8>, &'a [CqlValue], Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
+    RequestAuthResponse(Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -313,7 +317,9 @@ pub struct CqlResponse {
 pub enum CqlResponseBody {
     ResponseError(u32, CowStr),
     ResponseReady,
-    ResponseAuth(CowStr),
+    ResponseAuthenticate(CowStr),
+    ResponseAuthChallenge(Vec<u8>),
+    ResponseAuthSuccess(Vec<u8>),
 
     ResultVoid,
     ResultRows(CqlRows),
