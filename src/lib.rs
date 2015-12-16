@@ -1,10 +1,6 @@
 #![crate_name = "cql"]
-//#![comment = "A Rust CQl binary protocol implementation"]
-//#![license = "MIT/ASL2"]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-// #![feature(custom_derive, core, into_cow, convert, collections)]
-// #![feature(custom_derive)]
 
 #[macro_use] extern crate enum_primitive as ep;
 

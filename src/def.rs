@@ -14,7 +14,6 @@ pub type CowStr = Cow<'static, str>;
 
 #[derive(Clone, Copy)]
 pub enum OpcodeRequest {
-    //requests
     OpcodeStartup = 0x01,
     OpcodeCredentials = 0x04,
     OpcodeOptions = 0x05,
@@ -27,7 +26,6 @@ pub enum OpcodeRequest {
 
 #[derive(Debug)]
 pub enum OpcodeResponse {
-    //responces
     OpcodeError = 0x00,
     OpcodeReady = 0x02,
     OpcodeAuthenticate = 0x03,
@@ -59,21 +57,11 @@ pub enum KindResult {
 
 pub fn opcode_response(val: u8) -> OpcodeResponse {
     match val {
-        /* requests
-        0x01 => OpcodeStartup,
-        0x04 => OpcodeCredentials,
-        0x05 => OpcodeOptions,
-        0x07 => OpcodeQuery,
-        0x09 => OpcodePrepare,
-        0x0B => OpcodeRegister,
-        */
-
         0x00 => OpcodeResponse::OpcodeError,
         0x02 => OpcodeResponse::OpcodeReady,
         0x03 => OpcodeResponse::OpcodeAuthenticate,
         0x06 => OpcodeResponse::OpcodeSupported,
         0x08 => OpcodeResponse::OpcodeResult,
-        // 0x0A => OpcodeExecute,
         0x0C => OpcodeResponse::OpcodeEvent,
 
         _ => OpcodeResponse::OpcodeUnknown
@@ -202,14 +190,6 @@ impl std::fmt::Display for RCError {
     }
 }
 
-/*
-impl<'a> std::convert::From<&'a std::io::Error> for RCError {
-    fn from(err: &'a std::io::Error) -> RCError {
-        RCError::new(Cow::Borrowed(err.description()), RCErrorType::IOError)
-    }
-}
-*/
-
 pub type RCResult<T> = Result<T, RCError>;
 
 #[derive(Debug)]
@@ -295,22 +275,6 @@ pub enum CqlValue {
 pub struct CqlRow {
     pub cols: Vec<CqlValue>,
 }
-
-/*
-impl CqlRow {
-    fn get_column(&self, col_name: &str) -> Option<CqlValue> {
-        let mut i = 0;
-        let len = self.metadata.row_metadata.len();
-        while i < len {
-            if self.metadata.row_metadata.get(i).col_name.as_slice() == col_name {
-                return Some(*self.cols.get(i));
-            }
-            i += 1;
-        }
-        None
-    }
-}
-*/
 
 #[derive(Debug)]
 pub struct CqlRows {
