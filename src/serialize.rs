@@ -313,7 +313,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlList(ref o) => match *o {
                 Some(ref v) => {
                     let len = v.len();
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)");
+                    if version >= 3 {
+                        try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)")
+                    } else {
+                        try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing CqlValue (List length)")
+                    }
                     v.iter().map(|e| e.serialize_size(buf, Cqli16, version));
                     Ok(())
                 },
@@ -322,7 +326,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlMap(ref o) => match *o {
                 Some(ref v) => {
                     let len = v.len();
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (Map length)");
+                    if version >= 3 {
+                        try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)")
+                    } else {
+                        try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing CqlValue (List length)")
+                    }
                     v.iter().map(|e| e.serialize_size(buf, Cqli16, version));
                     Ok(())
                 },
@@ -331,7 +339,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlSet(ref o) => match *o {
                 Some(ref v) => {
                     let len = v.len();
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (Set length)");
+                    if version >= 3 {
+                        try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)")
+                    } else {
+                        try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing CqlValue (List length)")
+                    }
                     v.iter().map(|e| e.serialize_size(buf, Cqli16, version));
                     Ok(())
                 },

@@ -38,21 +38,19 @@ pub trait CqlReader {
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
     fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>>;
 
-    fn read_cql_list(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLList>>;
-    fn read_cql_set(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLSet>>;
-    fn read_cql_map(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLMap>>;
+    fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
+    fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>>;
+    fn read_cql_map(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLMap>>;
 
     fn read_cql_metadata(&mut self) -> RCResult<CqlMetadata>;
     fn read_cql_frame_header(&mut self, version: u8) -> RCResult<CqlFrameHeader>;
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse>;
-    fn read_cql_rows(&mut self) -> RCResult<CqlRows>;
+    fn read_cql_rows(&mut self, collection_size: CqlBytesSize) -> RCResult<CqlRows>;
 
     fn read_cql_skip(&mut self, val_type: CqlBytesSize) -> RCResult<()>;
 
-    fn read_cql_column_value(&mut self, col_meta: &CqlColMetadata) -> RCResult<CqlValue>;
-    fn read_cql_collection_value(&mut self, col_type: &CqlValueType) -> RCResult<CqlValue>;
-
-
+    fn read_cql_value(&mut self, col_meta: &CqlColMetadata, collection_size: CqlBytesSize) -> RCResult<CqlValue>;
+    fn read_cql_value_single(&mut self, col_type: &CqlValueType, value_size: CqlBytesSize) -> RCResult<CqlValue>;
 }
 
 
@@ -167,35 +165,47 @@ impl<T: std::io::Read> CqlReader for T {
         }
     }
 
-    fn read_cql_list(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLList>> {
+    fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
-        let len = try_bo!(self.read_i16::<BigEndian>(), "Error reading list length");
+        let len = match value_size {
+            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
+        };
+
         let mut list: CQLList = vec![];
         for _ in 0 .. len {
-            let col = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux1), "Error reading list value");
+            let col = try_rc!(self.read_cql_value_single(&col_meta.col_type_aux1, value_size), "Error reading list value");
             list.push(col);
         }
         Ok(Some(list))
     }
 
-    fn read_cql_set(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLSet>> {
+    fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading set size");
-        let len = try_bo!(self.read_i16::<BigEndian>(), "Error reading set length");
+        let len = match value_size {
+            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
+        };
+
         let mut set: CQLSet = vec![];
         for _ in 0 .. len {
-            let col = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux1), "Error reading set value");
+            let col = try_rc!(self.read_cql_value_single(&col_meta.col_type_aux1, value_size), "Error reading set value");
             set.push(col);
         }
         Ok(Some(set))
     }
 
-    fn read_cql_map(&mut self, col_meta: &CqlColMetadata) -> RCResult<Option<CQLMap>> {
+    fn read_cql_map(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLMap>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading map size");
-        let len = try_bo!(self.read_i16::<BigEndian>(), "Error reading map length");
+        let len = match value_size {
+            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
+        };
+
         let mut map: CQLMap = vec![];
         for _ in 0 .. len {
-            let key = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux1), "Error reading map key");
-            let value = try_rc!(self.read_cql_collection_value(&col_meta.col_type_aux2), "Error reading map value");
+            let key = try_rc!(self.read_cql_value_single(&col_meta.col_type_aux1, value_size), "Error reading map key");
+            let value = try_rc!(self.read_cql_value_single(&col_meta.col_type_aux2, value_size), "Error reading map value");
             map.push(Pair { key: key, value: value});
         }
         Ok(Some(map))
@@ -266,83 +276,90 @@ impl<T: std::io::Read> CqlReader for T {
         })
     }
 
-    fn read_cql_column_value(&mut self, col_meta: &CqlColMetadata) -> RCResult<CqlValue> {
+    fn read_cql_value(&mut self, col_meta: &CqlColMetadata, collection_size: CqlBytesSize) -> RCResult<CqlValue> {
         match col_meta.col_type {
-            ColumnASCII => Ok(CqlASCII(try_rc!(self.read_cql_str(CqlBytesSize::Cqli32), "Error reading column value (ASCII)"))),
-            ColumnVarChar => Ok(CqlVarchar(try_rc!(self.read_cql_str(CqlBytesSize::Cqli32), "Error reading column value (VarChar)"))),
-            ColumnText => Ok(CqlText(try_rc!(self.read_cql_str(CqlBytesSize::Cqli32), "Error reading column value (Text)"))),
-
-            ColumnInt => Ok(CqlInt(try_rc!(self.read_cql_i32(CqlBytesSize::Cqli32), "Error reading column value (Int)"))),
-            ColumnBigInt => Ok(CqlBigInt(try_rc!(self.read_cql_i64(CqlBytesSize::Cqli32), "Error reading column value (BigInt)"))),
-            ColumnFloat => Ok(CqlFloat(try_rc!(self.read_cql_f32(CqlBytesSize::Cqli32), "Error reading column value (Float)"))),
-            ColumnDouble => Ok(CqlDouble(try_rc!(self.read_cql_f64(CqlBytesSize::Cqli32), "Error reading column value (Double)"))),
-
-            ColumnList => { Ok(CqlList(try_rc!(self.read_cql_list(col_meta), "Error reading column value (list)"))) },
-            ColumnCustom => {
-                try_rc!(self.read_cql_skip(CqlBytesSize::Cqli32), "Error reading column value (custom)");
-                println!("Custom parse not implemented");
-                Ok(CqlUnknown)
-            },
-            ColumnBlob => Ok(CqlBlob(try_rc!(self.read_cql_blob(CqlBytesSize::Cqli32), "Error reading column value (blob)"))),
-            ColumnBoolean => Ok(CqlBoolean(try_rc!(self.read_cql_boolean(CqlBytesSize::Cqli32), "Error reading column vaue (boolean)"))),
-            ColumnCounter => Ok(CqlCounter(try_rc!(self.read_cql_i64(CqlBytesSize::Cqli32), "Error reading column value (counter"))),
-            ColumnDecimal => {
-                try_rc!(self.read_cql_skip(CqlBytesSize::Cqli32), "Error reading column value (decimal)");
-                println!("Decimal parse not implemented");
-                Ok(CqlUnknown)
-            },
-            ColumnTimestamp => Ok(CqlTimestamp(try_rc!(self.read_cql_u64(CqlBytesSize::Cqli32), "Error reading column value (timestamp)"))),
-            ColumnUuid => Ok(CqlUuid(try_rc!(self.read_cql_uuid(CqlBytesSize::Cqli32), "Error reading column value (uuid)"))),
-            ColumnVarint => {
-                try_rc!(self.read_cql_skip(CqlBytesSize::Cqli32), "Error reading column value (varint)");
-                println!("Varint parse not implemented");
-                Ok(CqlUnknown)
-            },
-            ColumnTimeUuid => Ok(CqlTimeUuid(try_rc!(self.read_cql_uuid(CqlBytesSize::Cqli32), "Error reading column value (timeuuid)"))),
-            ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet(CqlBytesSize::Cqli32), "Error reading column value (inet)"))),
-            ColumnMap => { Ok(CqlMap(try_rc!(self.read_cql_map(col_meta), "Error reading column value (map)"))) },
-            ColumnSet => { Ok(CqlSet(try_rc!(self.read_cql_set(col_meta), "Error reading column value (set)"))) },
-            CqlValueType::ColumnUnknown => panic!("Unknown column type !")
+            ColumnList => { Ok(CqlList(try_rc!(self.read_cql_list(col_meta, collection_size), "Error reading column value (list)"))) },
+            ColumnMap => { Ok(CqlMap(try_rc!(self.read_cql_map(col_meta, collection_size), "Error reading column value (map)"))) },
+            ColumnSet => { Ok(CqlSet(try_rc!(self.read_cql_set(col_meta, collection_size), "Error reading column value (set)"))) },
+            _ => self.read_cql_value_single(&col_meta.col_type, CqlBytesSize::Cqli32)
         }
     }
 
-    fn read_cql_collection_value(&mut self, col_type: &CqlValueType) -> RCResult<CqlValue> {
+    fn read_cql_value_single(&mut self, col_type: &CqlValueType, val_type: CqlBytesSize) -> RCResult<CqlValue> {
         match *col_type {
-            ColumnASCII => Ok(CqlASCII(try_rc!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading collection value (ASCII)"))),
-            ColumnVarChar => Ok(CqlVarchar(try_rc!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading collection value (VarChar)"))),
-            ColumnText => Ok(CqlText(try_rc!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading collection value (Text)"))),
-            ColumnInt => Ok(CqlInt(try_rc!(self.read_cql_i32(CqlBytesSize::Cqli16), "Error reading collection value (Int)"))),
-            ColumnBigInt => Ok(CqlBigInt(try_rc!(self.read_cql_i64(CqlBytesSize::Cqli16), "Error reading collection value (BigInt)"))),
-            ColumnFloat => Ok(CqlFloat(try_rc!(self.read_cql_f32(CqlBytesSize::Cqli16), "Error reading collection value (Float)"))),
-            ColumnDouble => Ok(CqlDouble(try_rc!(self.read_cql_f64(CqlBytesSize::Cqli16), "Error reading collection value (Double)"))),
+            ColumnASCII => Ok(CqlASCII(try_rc!(self.read_cql_str(val_type), "Error reading column value (ASCII)"))),
+            ColumnVarChar => Ok(CqlVarchar(try_rc!(self.read_cql_str(val_type), "Error reading column value (VarChar)"))),
+            ColumnText => Ok(CqlText(try_rc!(self.read_cql_str(val_type), "Error reading column value (Text)"))),
+
+            ColumnInt => Ok(CqlInt(try_rc!(self.read_cql_i32(val_type), "Error reading column value (Int)"))),
+            ColumnBigInt => Ok(CqlBigInt(try_rc!(self.read_cql_i64(val_type), "Error reading column value (BigInt)"))),
+            ColumnFloat => Ok(CqlFloat(try_rc!(self.read_cql_f32(val_type), "Error reading column value (Float)"))),
+            ColumnDouble => Ok(CqlDouble(try_rc!(self.read_cql_f64(val_type), "Error reading column value (Double)"))),
+
             ColumnCustom => {
-                try_rc!(self.read_cql_skip(CqlBytesSize::Cqli16), "Error reading collection value (custom)");
+                try_rc!(self.read_cql_skip(val_type), "Error reading column value (custom)");
                 println!("Custom parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnBlob => Ok(CqlBlob(try_rc!(self.read_cql_blob(CqlBytesSize::Cqli16), "Error reading collection value (blob)"))),
-            ColumnBoolean => Ok(CqlBoolean(try_rc!(self.read_cql_boolean(CqlBytesSize::Cqli16), "Error reading collection vaue (boolean)"))),
-            ColumnCounter => Ok(CqlCounter(try_rc!(self.read_cql_i64(CqlBytesSize::Cqli16), "Error reading collection value (counter"))),
+            ColumnBlob => Ok(CqlBlob(try_rc!(self.read_cql_blob(val_type), "Error reading column value (blob)"))),
+            ColumnBoolean => Ok(CqlBoolean(try_rc!(self.read_cql_boolean(val_type), "Error reading column vaue (boolean)"))),
+            ColumnCounter => Ok(CqlCounter(try_rc!(self.read_cql_i64(val_type), "Error reading column value (counter"))),
             ColumnDecimal => {
-                try_rc!(self.read_cql_skip(CqlBytesSize::Cqli16), "Error reading collection value (decimal)");
+                try_rc!(self.read_cql_skip(val_type), "Error reading column value (decimal)");
                 println!("Decimal parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnTimestamp => Ok(CqlTimestamp(try_rc!(self.read_cql_u64(CqlBytesSize::Cqli16), "Error reading collection value (timestamp)"))),
-            ColumnUuid => Ok(CqlUuid(try_rc!(self.read_cql_uuid(CqlBytesSize::Cqli16), "Error reading collection value (uuid)"))),
+            ColumnTimestamp => Ok(CqlTimestamp(try_rc!(self.read_cql_u64(val_type), "Error reading column value (timestamp)"))),
+            ColumnUuid => Ok(CqlUuid(try_rc!(self.read_cql_uuid(val_type), "Error reading column value (uuid)"))),
             ColumnVarint => {
-                try_rc!(self.read_cql_skip(CqlBytesSize::Cqli16), "Error reading collection value (varint)");
+                try_rc!(self.read_cql_skip(val_type), "Error reading column value (varint)");
                 println!("Varint parse not implemented");
                 Ok(CqlUnknown)
             },
-            ColumnTimeUuid => Ok(CqlTimeUuid(try_rc!(self.read_cql_uuid(CqlBytesSize::Cqli16), "Error reading collection value (timeuuid)"))),
-            ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet(CqlBytesSize::Cqli16), "Error reading collection value (inet)"))),
-            _ => panic!("Unknown column type !")
+            ColumnTimeUuid => Ok(CqlTimeUuid(try_rc!(self.read_cql_uuid(val_type), "Error reading column value (timeuuid)"))),
+            ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet(val_type), "Error reading column value (inet)"))),
+            CqlValueType::ColumnUnknown => panic!("Unknown column type !"),
+            _ => Err(RCError::new("Trying to read a non-single value type", ReadError))
         }
     }
 
+    // fn read_cql_collection_value(&mut self, col_type: &CqlValueType) -> RCResult<CqlValue> {
+    //     match *col_type {
+    //         ColumnASCII => Ok(CqlASCII(try_rc!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading collection value (ASCII)"))),
+    //         ColumnVarChar => Ok(CqlVarchar(try_rc!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading collection value (VarChar)"))),
+    //         ColumnText => Ok(CqlText(try_rc!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading collection value (Text)"))),
+    //         ColumnInt => Ok(CqlInt(try_rc!(self.read_cql_i32(CqlBytesSize::Cqli16), "Error reading collection value (Int)"))),
+    //         ColumnBigInt => Ok(CqlBigInt(try_rc!(self.read_cql_i64(CqlBytesSize::Cqli16), "Error reading collection value (BigInt)"))),
+    //         ColumnFloat => Ok(CqlFloat(try_rc!(self.read_cql_f32(CqlBytesSize::Cqli16), "Error reading collection value (Float)"))),
+    //         ColumnDouble => Ok(CqlDouble(try_rc!(self.read_cql_f64(CqlBytesSize::Cqli16), "Error reading collection value (Double)"))),
+    //         ColumnCustom => {
+    //             try_rc!(self.read_cql_skip(CqlBytesSize::Cqli16), "Error reading collection value (custom)");
+    //             println!("Custom parse not implemented");
+    //             Ok(CqlUnknown)
+    //         },
+    //         ColumnBlob => Ok(CqlBlob(try_rc!(self.read_cql_blob(CqlBytesSize::Cqli16), "Error reading collection value (blob)"))),
+    //         ColumnBoolean => Ok(CqlBoolean(try_rc!(self.read_cql_boolean(CqlBytesSize::Cqli16), "Error reading collection vaue (boolean)"))),
+    //         ColumnCounter => Ok(CqlCounter(try_rc!(self.read_cql_i64(CqlBytesSize::Cqli16), "Error reading collection value (counter"))),
+    //         ColumnDecimal => {
+    //             try_rc!(self.read_cql_skip(CqlBytesSize::Cqli16), "Error reading collection value (decimal)");
+    //             println!("Decimal parse not implemented");
+    //             Ok(CqlUnknown)
+    //         },
+    //         ColumnTimestamp => Ok(CqlTimestamp(try_rc!(self.read_cql_u64(CqlBytesSize::Cqli16), "Error reading collection value (timestamp)"))),
+    //         ColumnUuid => Ok(CqlUuid(try_rc!(self.read_cql_uuid(CqlBytesSize::Cqli16), "Error reading collection value (uuid)"))),
+    //         ColumnVarint => {
+    //             try_rc!(self.read_cql_skip(CqlBytesSize::Cqli16), "Error reading collection value (varint)");
+    //             println!("Varint parse not implemented");
+    //             Ok(CqlUnknown)
+    //         },
+    //         ColumnTimeUuid => Ok(CqlTimeUuid(try_rc!(self.read_cql_uuid(CqlBytesSize::Cqli16), "Error reading collection value (timeuuid)"))),
+    //         ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet(CqlBytesSize::Cqli16), "Error reading collection value (inet)"))),
+    //         _ => panic!("Unknown column type !")
+    //     }
+    // }
 
-    fn read_cql_rows(&mut self) -> RCResult<CqlRows> {
+
+    fn read_cql_rows(&mut self, collection_size: CqlBytesSize) -> RCResult<CqlRows> {
         let metadata = try_rc!(self.read_cql_metadata(), "Error reading metadata");
         let rows_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading metadata");
 
@@ -350,7 +367,7 @@ impl<T: std::io::Read> CqlReader for T {
         for _ in 0u32..rows_count {
             let mut row = CqlRow{ cols: vec![] };
             for meta in metadata.row_metadata.iter() {
-                let col = try_rc!(self.read_cql_column_value(meta), "Error reading column value");
+                let col = try_rc!(self.read_cql_value(meta, collection_size), "Error reading column value");
                 row.cols.push(col);
             }
             rows.push(row);
@@ -432,14 +449,14 @@ impl<T: std::io::Read> CqlReader for T {
                 ResponseError(code, msg)
             },
             OpcodeResult => {
-                println!("We got a result ...");
                 let kind = KindResult::from_u32(try_bo!(reader.read_u32::<BigEndian>(), "Error reading result kind"));
                 match kind {
                     Some(KindVoid) => {
                         ResultVoid
                     },
                     Some(KindRows) => {
-                        ResultRows(try_rc!(reader.read_cql_rows(), "Error reading result Rows"))
+                        let collection_size = if version >= 3 { CqlBytesSize::Cqli32 } else { CqlBytesSize::Cqli16 };
+                        ResultRows(try_rc!(reader.read_cql_rows(collection_size), "Error reading result Rows"))
                     },
                     Some(KindSetKeyspace) => {
                         let msg = try_rc_noption!(reader.read_cql_str(CqlBytesSize::Cqli16), "Error reading result Keyspace");
