@@ -32,16 +32,6 @@ impl Client {
         Client {socket: socket, version: version, prepared: BTreeMap::new()}
     }
 
-    fn build_auth<'a>(&self, creds: &'a Vec<CowStr>, stream: i16) -> CqlRequest<'a> {
-        return CqlRequest {
-            version: self.version,
-            flags: 0x00,
-            stream: stream,
-            opcode: OpcodeOptions,
-            body: RequestCred(creds),
-        };
-    }
-
     fn build_options(&self) -> CqlRequest {
         return CqlRequest {
             version: self.version,
@@ -146,6 +136,21 @@ impl Client {
     }
 }
 
+fn approve_authenticator(authenticator: &CowStr) -> bool {
+    authenticator == "org.apache.cassandra.auth.PasswordAuthenticator"
+}
+
+///
+/// Makes an authentication response token that is compatible with PasswordAuthenticator.
+///
+fn make_token(creds: &Vec<CowStr>) -> Vec<u8> {
+    let mut token : Vec<u8> = Vec::new();
+    for cred in creds {
+        token.push(0);
+        token.extend(cred.as_bytes());
+    }
+    return token;
+}
 
 fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Vec<CowStr>>) -> RCResult<()> {
     let body = CqlStringMap {
@@ -164,26 +169,33 @@ fn send_startup(socket: &mut std::net::TcpStream, version: u8, creds: Option<&Ve
     let response = try_rc!(socket.read_cql_response(version), "Error reading response");
     match response.body {
         ResponseReady =>  Ok(()),
-        ResponseAuth(_) => {
-            match creds {
-                Some(cred) => {
-                    let msg_auth = CqlRequest {
-                        version: version,
-                        flags: 0x00,
-                        stream: 0x01,
-                        opcode: OpcodeOptions,
-                        body: RequestCred(cred),
-                    };
-                    try_rc!(msg_auth.serialize(socket, version), "Error serializing request (auth)");
-                    
-                    let response = try_rc!(socket.read_cql_response(version), "Error reading authenticaton response");
-                    match response.body {
-                        ResponseReady => Ok(()),
-                        ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
-                        _ => Err(RCError::new("Server returned unknown message", ReadError))
-                    }
-                },
-                None => Err(RCError::new("Credential should be provided for authentication", ReadError))
+        ResponseAuthenticate(authenticator) => {
+            if approve_authenticator(&authenticator) {
+                match creds {
+                    Some(cred) => {
+                        if version >= 2 {
+                            let msg_auth = CqlRequest {
+                                version: version,
+                                flags: 0x00,
+                                stream: 0x01,
+                                opcode: OpcodeAuthResponse,
+                                body: RequestAuthResponse(make_token(cred)),
+                            };
+                            try_rc!(msg_auth.serialize(socket, version), "Error serializing request (auth)");
+                            let response = try_rc!(socket.read_cql_response(version), "Error reading authentication response");
+                            match response.body {
+                                ResponseAuthSuccess(_) => Ok(()),
+                                ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
+                                _ => Err(RCError::new("Server returned unknown message", ReadError))
+                            }
+                        } else {
+                            Err(RCError::new("Authentication is not supported for v1 protocol", ReadError)) 
+                        }
+                    },
+                    None => Err(RCError::new("Credential should be provided for authentication", ReadError))
+                }
+            } else {
+                Err(RCError::new(format!("Unexpected authenticator: {}", authenticator), ReadError))
             }
         },
         ResponseError(_, ref msg) => Err(RCError::new(format!("Error connecting: {}", msg), ReadError)),
