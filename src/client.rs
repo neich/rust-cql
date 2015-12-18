@@ -2,11 +2,11 @@ extern crate mio;
 extern crate bytes;
 extern crate eventual;
 
-use self::eventual::{Future,Async,Complete};
-use self::mio::*;
+use self::eventual::{Future, Async, Complete};
+use self::mio::{Token, EventLoop, Sender, TryRead, TryWrite};
 use self::mio::tcp::TcpStream;
 use self::mio::util::Slab;
-use self::mio::buf::{ByteBuf,MutByteBuf};
+use self::bytes::{ByteBuf, MutByteBuf};
 use std::{mem, str};
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -121,6 +121,21 @@ impl Client{
         }
     }
     
+    fn approve_authenticator(&self, authenticator: &CowStr) -> bool {
+        authenticator == "org.apache.cassandra.auth.PasswordAuthenticator"
+    }
+
+    ///
+    /// Makes an authentication response token that is compatible with PasswordAuthenticator.
+    ///
+    fn make_token(&self, creds: &Vec<CowStr>) -> Vec<u8> {
+        let mut token : Vec<u8> = Vec::new();
+        for cred in creds {
+            token.push(0);
+            token.extend(cred.as_bytes());
+        }
+        return token;
+    }
 
     fn send_startup(&mut self, creds: Option<Vec<CowStr>>,token: Token) -> RCResult<()> {
         let body = CqlStringMap {
@@ -134,34 +149,39 @@ impl Client{
             body: RequestStartup(body),
         };
 
-        let mut future = self.send_message(msg_startup,token);
+        let mut future = self.send_message(msg_startup, token);
         let mut cql_response = future.await()
                                      .ok().expect("Couldn't recieve future")
                                      .ok().expect("Couldn't get CQL response");
         
         match cql_response.body {
             ResponseReady =>  Ok(()),
-            ResponseAuth(_) => {
-                match creds {
-                    Some(cred) => {
-                        let msg_auth = CqlRequest {
-                            version: self.version,
-                            flags: 0x00,
-                            stream: 0x01,
-                            opcode: OpcodeOptions,
-                            body: RequestCred(cred),
-                        };
-                        future = self.send_message(msg_auth,token);
-                        cql_response = future.await()
-                                             .ok().expect("Couldn't recieve future")
-                                             .unwrap();
-                        match cql_response.body {
-                            ResponseReady => Ok(()),
-                            ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
-                            _ => Err(RCError::new("Server returned unknown message", ReadError))
-                        }
-                    },
-                    None => Err(RCError::new("Credential should be provided for authentication", ReadError))
+            ResponseAuthenticate(authenticator) => {
+                if self.approve_authenticator(&authenticator) {
+                    match creds {
+                        Some(ref cred) => {
+                            if self.version >= 2 {
+                                let msg_auth = CqlRequest {
+                                    version: self.version,
+                                    flags: 0x00,
+                                    stream: 0x01,
+                                    opcode: OpcodeAuthResponse,
+                                    body: RequestAuthResponse(self.make_token(cred)),
+                                };
+                                let response = self.send_message(msg_auth, token).await().ok().expect("Couldn't recieve future").ok().expect("Couldn't get CQL response");
+                                match response.body {
+                                    ResponseAuthSuccess(_) => Ok(()),
+                                    ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
+                                    _ => Err(RCError::new("Server returned unknown message", ReadError))
+                                }
+                            } else {
+                                Err(RCError::new("Authentication is not supported for v1 protocol", ReadError)) 
+                            }
+                        },
+                        None => Err(RCError::new("Credential should be provided for authentication", ReadError))
+                    }
+                } else {
+                    Err(RCError::new(format!("Unexpected authenticator: {}", authenticator), ReadError))
                 }
             },
             ResponseError(_, ref msg) => Err(RCError::new(format!("Error connecting: {}", msg), ReadError)),
@@ -183,7 +203,7 @@ impl Client{
         println!("Adding connection!!");
         self.pool.add_channel_with_token(event_loop.channel(),token);
         println!("It's seems we could add a connection ");
-        event_loop.register_opt(
+        event_loop.register(
                 &socket,
                 token,
                 mio::EventSet::writable(),

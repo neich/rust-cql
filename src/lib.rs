@@ -1,10 +1,6 @@
 #![crate_name = "cql"]
-//#![comment = "A Rust CQl binary protocol implementation"]
-//#![license = "MIT/ASL2"]
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
-// #![feature(custom_derive, core, into_cow, convert, collections)]
-// #![feature(custom_derive)]
 
 #[macro_use] extern crate enum_primitive as ep;
 
@@ -31,8 +27,8 @@ macro_rules! try_bo(
             Ok(val) => val,
             Err(self::byteorder::Error::UnexpectedEOF) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, "Unexpected EOF"), $crate::def::RCErrorType::IOError)),
             Err(self::byteorder::Error::Io(ref err)) => {
-                use std::error::Error;
-                return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            	use std::error::Error;
+            	return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
             }
         };
     }
@@ -44,8 +40,8 @@ macro_rules! try_io(
         match $call {
             Ok(val) => val,
             Err(ref err) => {
-                use std::error::Error;
-                return Err(RCError::new(format!("{} -> {}", $msg, err.description()), RCErrorType::IOError))
+            	use std::error::Error;
+            	return Err(RCError::new(format!("{} -> {}", $msg, err.description()), RCErrorType::IOError))
             }
         };
     }

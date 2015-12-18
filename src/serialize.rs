@@ -1,7 +1,6 @@
 extern crate std;
 extern crate byteorder;
 
-// use std::iter::AdditiveIterator;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::borrow::Cow;
@@ -15,20 +14,6 @@ use super::def::RCErrorType::*;
 use super::def::Query::*;
 use super::def::CqlValue::*;
 use super::client::Client;
-
-// From
-// http://stackoverflow.com/questions/26714984/rust-how-to-borrow-an-immutable-view-slice-to-a-vector-as-octets
-/*
-fn view_as_bytes<'a, T: Copy>(items: &'a [T]) -> &'a [u8] {  // '
-    let raw_items: Slice<T> = unsafe { mem::transmute(items) };
-    let raw_bytes = Slice {
-        data: raw_items.data as *const u8,
-        len: raw_items.len * mem::size_of::<T>()
-    };
-    let bytes: &[u8] = unsafe { mem::transmute(raw_bytes) };
-    bytes
-}
-*/
 
 pub trait CqlSerializable<'a> {
     fn len(&'a self, version: u8) -> usize;
@@ -86,60 +71,20 @@ impl<'a> CqlSerializable<'a> for CqlStringMap {
     }
 }
 
-fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, stream: &i8, opcode: &u8, len: &u32) -> RCResult<()> {
+fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, stream: &i16, opcode: &u8, len: &u32) -> RCResult<()> {
     try_bo!(buf.write_u8(*version), "Error serializing CqlRequest (version)");
     try_bo!(buf.write_u8(*flags), "Error serializing CqlRequest (flags)");
-    try_bo!(buf.write_i8(*stream), "Error serializing CqlRequest (stream)");
+    if *version >= 3 {
+        try_bo!(buf.write_i16::<BigEndian>(*stream), "Error serializing CqlRequest (stream)");
+    } else {
+        try_bo!(buf.write_i8(*stream as i8), "Error serializing CqlRequest (stream)");
+    }
     try_bo!(buf.write_u8(*opcode), "Error serializing CqlRequest (opcode)");
     try_bo!(buf.write_u32::<BigEndian>(*len), "Error serializing CqlRequest (length)");
     Ok(())
 }
 
 impl<'a> CqlSerializable<'a> for CqlRequest {
-/*    fn serialize_with_client<T: std::io::Write>(&'a self, buf: &mut T, cl: &mut Client) -> RCResult<()> {
-        match self.body {
-            RequestExec(ref ps_id, ref params, ref cons, flags) => {
-                let len = (self.len_with_client(cl)-8) as u32;
-                let ocode = self.opcode as u8;
-                serialize_header(buf, &cl.version, &self.flags, &self.stream, &ocode, &len);
-                let version = self.version;
-                let preps = match cl.get_prepared_statement(ps_id) {
-                    Ok(ps) => ps,
-                    Err(_) => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
-                };
-                try_bo!(buf.write_i16::<BigEndian>(preps.len() as i16), "Error serializing EXEC request (id length)");
-                try_io!(buf.write(&preps), "Error serializing EXEC request (id)");
-                if version >= 2 {
-                    try_bo!(buf.write_u16::<BigEndian>(*cons as u16), "Error serializing CqlRequest (query consistency)");
-                    try_bo!(buf.write_u8(flags), "Error serializing CqlRequest (query flags)");
-                    try_bo!(buf.write_i16::<BigEndian>(params.len() as i16), "Error serializing EXEC request (params length)");                
-                    for v in params.iter() {
-                        v.serialize_size(buf, Cqli32, version);
-                    }
-                } else {
-                    try_bo!(buf.write_i16::<BigEndian>(params.len() as i16), "Error serializing EXEC request (params length)");                
-                    for v in params.iter() {
-                        v.serialize_size(buf, Cqli32, version);
-                    }
-                    try_bo!(buf.write_u16::<BigEndian>(*cons as u16), "Error serializing CqlRequest (query consistency)");
-                }
-                Ok(())
-            },
-            RequestBatch(ref q_vec, ref r_type, ref con, flags) => {
-                let len = (self.len_with_client(cl)-8) as u32;
-                let ocode = self.opcode as u8;
-                serialize_header(buf, &cl.version, &self.flags, &self.stream, &ocode, &len);
-                let version = self.version;
-                try_bo!(buf.write_u8(*r_type as u8), "Error serializing BATCH request (request type)");
-                try_bo!(buf.write_u16::<BigEndian>(q_vec.len() as u16), "Error serializing BATCH request (number of requests)");
-                q_vec.iter().all(|r| { r.serialize_with_client(buf, cl); true });
-                try_bo!(buf.write_u16::<BigEndian>(*con as u16), "Error serializing BATCH request (consistency)");
-                Ok(())
-            }
-            _ => self.serialize(buf, cl.version)
-        }
-    }
-*/
     fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         Err(RCError::new("Cannot serialize Request without Client context", WriteError))
     }
@@ -175,6 +120,9 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
                 try_bo!(buf.write_u16::<BigEndian>(q_vec.len() as u16), "Error serializing BATCH request (number of requests)");
                 q_vec.iter().all(|r| { r.serialize(buf, version); true });
                 try_bo!(buf.write_u16::<BigEndian>(*con as u16), "Error serializing BATCH request (consistency)");
+                if version >= 3 {
+                    try_bo!(buf.write_u8(0 as u8), "Error serializing BATCH request (flags)");
+                }
                 Ok(())
             },
             RequestStartup(ref map) => {
@@ -196,30 +144,16 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
                 try_io!(buf.write(query_str.as_bytes()), "Error serializing CqlRequest (query)");
                 Ok(())               
             },
+            RequestAuthResponse(ref token) => {
+                let len_str = token.len() as u32;
+                try_bo!(buf.write_u32::<BigEndian>(len_str), "Error serializing CqlRequest (token length)");
+                try_io!(buf.write(token), "Error serializing CqlRequest (token)");
+                Ok(())
+            },
             _ => Ok(())
         }
     }
 
-/*    fn len_with_client(&'a self, cl: &mut Client) -> usize {
-        match self.body {
-            RequestExec(ref ps_id, ref values, _, _) => {
-                let version = self.version;
-                let preps = match cl.get_prepared_statement(ps_id) {
-                    Ok(ps) => ps,
-                    Err(_) => return 0
-                };
-                let final_bytes = if version >= 2 { 3 } else { 2 };
-                let values_size:usize = values.iter().fold(0, |a, ref b| a + 4 + b.len(version));
-                8 + 2 + preps.len() as usize + 2 +  values_size + final_bytes as usize
-            },
-            RequestBatch(ref q_vec, ref r_type, ref con, flags) => {
-                let q_vec_size:usize = q_vec.iter().fold(0, |a, ref b| a + b.len_with_client(cl));
-                8 + 3 + q_vec_size + 2
-            }
-            _ => self.len(cl.version)
-        }
-    }
-*/
     fn len(&'a self, version: u8) -> usize {
         8 + match self.body {
             RequestStartup(ref map) => map.len(version),
@@ -235,8 +169,15 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
             },
             RequestBatch(ref q_vec, ref r_type, ref con, flags) => {
                 let q_vec_size:usize = q_vec.iter().fold(0, |a, ref b| a + b.len(version));
-                3 + q_vec_size + 2
+                if version >= 3 {
+                    3 + q_vec_size + 3
+                } else {
+                    3 + q_vec_size + 2
+                }
             },
+            RequestAuthResponse(ref token) => {
+                4 + token.len()
+            }
             _ => 0
         }
     }
@@ -267,40 +208,6 @@ impl<'a> CqlSerializable<'a> for Query {
             _ => Err(RCError::new(" ad serialize query in BATH request", WriteError))
         }
     }
-
-    /*fn serialize_with_client<T: std::io::Write>(&'a self, buf: &mut T, cl: &mut Client) -> RCResult<()> {
-        match *self {
-            QueryPrepared(ref p_name, ref values) => {
-                let version = cl.version;
-                let preps = match cl.get_prepared_statement(p_name) {
-                    Ok(ps) => ps,
-                    Err(_) => return Err(RCError::new(format!("Unknown prepared statement <{}>", p_name), GenericError))
-                };
-                try_bo!(buf.write_u8(1u8), "Error serializing BATCH prepared query (type)");
-                write_size!(buf, preps.len(), Cqli16);
-                try_io!(buf.write(&preps), "Error serializing BATCH prepared query (id)");
-                try_bo!(buf.write_u16::<BigEndian>(values.len() as u16), "Error serializing BATCH prepared query (values length)");
-                values.iter().all(|v| { v.serialize(buf, version); true});
-                Ok(())
-            },
-            _ => self.serialize(buf, cl.version)
-        }
-    }
-*/
-    /*fn len_with_client(&'a self, cl: &mut Client) -> usize {
-        match *self {
-            QueryPrepared(ref p_name, ref values) => {
-                let version = cl.version;
-                let preps = match cl.get_prepared_statement(p_name) {
-                    Ok(ps) => ps,
-                    Err(_) => return 0
-                };
-                let values_size:usize = values.iter().fold(0, |a, ref b| a + 4 + b.len(version));
-                5 + preps.len() + values_size
-            },
-            _ => self.len(cl.version)
-        }
-    }*/
 
     fn len(&'a self, version: u8) -> usize {
         match *self {
@@ -406,7 +313,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlList(ref o) => match *o {
                 Some(ref v) => {
                     let len = v.len();
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)");
+                    if version >= 3 {
+                        try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)")
+                    } else {
+                        try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing CqlValue (List length)")
+                    }
                     v.iter().map(|e| e.serialize_size(buf, Cqli16, version));
                     Ok(())
                 },
@@ -415,7 +326,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlMap(ref o) => match *o {
                 Some(ref v) => {
                     let len = v.len();
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (Map length)");
+                    if version >= 3 {
+                        try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)")
+                    } else {
+                        try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing CqlValue (List length)")
+                    }
                     v.iter().map(|e| e.serialize_size(buf, Cqli16, version));
                     Ok(())
                 },
@@ -424,7 +339,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             CqlSet(ref o) => match *o {
                 Some(ref v) => {
                     let len = v.len();
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (Set length)");
+                    if version >= 3 {
+                        try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing CqlValue (List length)")
+                    } else {
+                        try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing CqlValue (List length)")
+                    }
                     v.iter().map(|e| e.serialize_size(buf, Cqli16, version));
                     Ok(())
                 },
@@ -591,3 +510,4 @@ impl<'a, T:CqlSerializable<'a>, V:CqlSerializable<'a>> CqlSerializable<'a> for P
         0
     }
 }
+

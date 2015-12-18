@@ -14,28 +14,36 @@ pub type CowStr = Cow<'static, str>;
 
 #[derive(Clone, Copy)]
 pub enum OpcodeRequest {
-    //requests
     OpcodeStartup = 0x01,
-    OpcodeCredentials = 0x04,
     OpcodeOptions = 0x05,
     OpcodeQuery = 0x07,
     OpcodePrepare = 0x09,
     OpcodeExecute = 0x0A,
     OpcodeRegister = 0x0B,
-    OpcodeBatch = 0x0D
+    OpcodeBatch = 0x0D,
+    OpcodeAuthResponse = 0x0F,
 }
 
 #[derive(Debug)]
 pub enum OpcodeResponse {
-    //responces
     OpcodeError = 0x00,
     OpcodeReady = 0x02,
     OpcodeAuthenticate = 0x03,
     OpcodeSupported = 0x06,
     OpcodeResult = 0x08,
     OpcodeEvent = 0x0C,
+    OpcodeAuthChallenge = 0x0E,
+    OpcodeAuthSuccess = 0x10,
 
     OpcodeUnknown
+}
+
+#[derive(Debug)]
+pub struct CqlFrameHeader {
+    pub version: u8,
+    pub flags: u8,
+    pub stream: i16,
+    pub opcode: u8,
 }
 
 enum_from_primitive! {
@@ -51,22 +59,14 @@ pub enum KindResult {
 
 pub fn opcode_response(val: u8) -> OpcodeResponse {
     match val {
-        /* requests
-        0x01 => OpcodeStartup,
-        0x04 => OpcodeCredentials,
-        0x05 => OpcodeOptions,
-        0x07 => OpcodeQuery,
-        0x09 => OpcodePrepare,
-        0x0B => OpcodeRegister,
-        */
-
         0x00 => OpcodeResponse::OpcodeError,
         0x02 => OpcodeResponse::OpcodeReady,
         0x03 => OpcodeResponse::OpcodeAuthenticate,
         0x06 => OpcodeResponse::OpcodeSupported,
         0x08 => OpcodeResponse::OpcodeResult,
-        // 0x0A => OpcodeExecute,
         0x0C => OpcodeResponse::OpcodeEvent,
+        0x0E => OpcodeResponse::OpcodeAuthChallenge,
+        0x10 => OpcodeResponse::OpcodeAuthSuccess,
 
         _ => OpcodeResponse::OpcodeUnknown
     }
@@ -93,7 +93,7 @@ pub enum BatchType {
     Counter = 0x02
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug)]
 pub enum CqlValueType {
     ColumnCustom = 0x0000,
     ColumnASCII = 0x0001,
@@ -194,27 +194,20 @@ impl std::fmt::Display for RCError {
     }
 }
 
-/*
-impl<'a> std::convert::From<&'a std::io::Error> for RCError {
-    fn from(err: &'a std::io::Error) -> RCError {
-        RCError::new(Cow::Borrowed(err.description()), RCErrorType::IOError)
-    }
-}
-*/
-
 pub type RCResult<T> = Result<T, RCError>;
 
 #[derive(Debug, Clone)]
-//pub enum IpAddr before; rename because it colides with mio library
 pub enum IpAddress {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr)
 }
 
+#[derive(Debug, Clone)]
 pub struct CqlStringMap {
     pub pairs: Vec<CqlPair>,
 }
 
+#[derive(Debug, Clone)]
 pub struct CqlPair {
     pub key: &'static str,
     pub value: &'static str,
@@ -231,7 +224,7 @@ pub struct CqlTableDesc {
     pub tablename: String
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug)]
 pub struct CqlColMetadata {
     pub keyspace: CowStr,
     pub table: CowStr,
@@ -241,7 +234,7 @@ pub struct CqlColMetadata {
     pub col_type_aux2: CqlValueType
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug)]
 pub struct CqlMetadata {
     pub flags: u32,
     pub column_count: u32,
@@ -289,22 +282,6 @@ pub struct CqlRow {
     pub cols: Vec<CqlValue>,
 }
 
-/*
-impl CqlRow {
-    fn get_column(&self, col_name: &str) -> Option<CqlValue> {
-        let mut i = 0;
-        let len = self.metadata.row_metadata.len();
-        while i < len {
-            if self.metadata.row_metadata.get(i).col_name.as_slice() == col_name {
-                return Some(*self.cols.get(i));
-            }
-            i += 1;
-        }
-        None
-    }
-}
-*/
-
 #[derive(Debug)]
 pub struct CqlRows {
     pub metadata: CqlMetadata,
@@ -314,7 +291,7 @@ pub struct CqlRows {
 pub struct CqlRequest {
     pub version: u8,
     pub flags: u8,
-    pub stream: i8,
+    pub stream: i16,
     pub opcode: OpcodeRequest,
     pub body: CqlRequestBody,
 }
@@ -324,16 +301,17 @@ pub enum CqlRequestBody {
     RequestCred(Vec<CowStr>),
     RequestQuery(String, Consistency, u8),
     RequestPrepare(String),
-    RequestExec(Vec<u8>,  Vec<CqlValue>, Consistency, u8),
+    RequestExec(Vec<u8>, Vec<CqlValue>, Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
+    RequestAuthResponse(Vec<u8>)
 }
 
 #[derive(Debug)]
 pub struct CqlResponse {
     pub version: u8,
     pub flags: u8,
-    pub stream: i8,
+    pub stream: i16,
     pub opcode: OpcodeResponse,
     pub body: CqlResponseBody,
 }
@@ -342,7 +320,9 @@ pub struct CqlResponse {
 pub enum CqlResponseBody {
     ResponseError(u32, CowStr),
     ResponseReady,
-    ResponseAuth(CowStr),
+    ResponseAuthenticate(CowStr),
+    ResponseAuthChallenge(Vec<u8>),
+    ResponseAuthSuccess(Vec<u8>),
 
     ResultVoid,
     ResultRows(CqlRows),
@@ -354,7 +334,7 @@ pub enum CqlResponseBody {
     ResponseEmpty,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug)]
 pub struct CqlPreparedStat {
     pub id: Vec<u8>,
     pub meta: CqlMetadata,
@@ -367,3 +347,7 @@ pub enum Query {
     QueryPrepared(Vec<u8>, Vec<CqlValue>),
     QueryBatch(Vec<Query>)
 }
+
+
+
+
