@@ -84,7 +84,7 @@ fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, st
     Ok(())
 }
 
-impl<'a> CqlSerializable<'a> for CqlRequest<'a> {
+impl<'a> CqlSerializable<'a> for CqlRequest {
     fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         Err(RCError::new("Cannot serialize Request without Client context", WriteError))
     }
@@ -285,13 +285,13 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             },
             CqlInet(ref o) => match *o {
                 Some(ref ip) => match *ip {
-                    IpAddr::Ipv4(ref ipv4) => {
+                    IpAddress::Ipv4(ref ipv4) => {
                         write_size!(buf, 5, bytes_size);
                         try_bo!(buf.write_u8(4), "Error serializing CqlValue (Ipv4Addr size)");
                         try_io!(buf.write(&ipv4.octets()), "Error serializing CqlValue (Ipv4Addr)");
                         Ok(())
                     },
-                    IpAddr::Ipv6(ref ipv6) => {
+                    IpAddress::Ipv6(ref ipv6) => {
                         write_size!(buf, 17, bytes_size);
                         try_bo!(buf.write_u8(16u8), "Error serializing CqlValue (Ipv6Addr size)");
                         for n in ipv6.segments().iter() {
@@ -432,8 +432,8 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             },
             &CqlInet(ref o) => match *o {
                 Some(ref ip) => match *ip {
-                    IpAddr::Ipv4(_) => 5,
-                    IpAddr::Ipv6(_) => 17
+                    IpAddress::Ipv4(_) => 5,
+                    IpAddress::Ipv6(_) => 17
                 },
                 None => 0
             },
