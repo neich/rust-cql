@@ -196,16 +196,18 @@ impl std::fmt::Display for RCError {
 
 pub type RCResult<T> = Result<T, RCError>;
 
-#[derive(Debug)]
-pub enum IpAddr {
+#[derive(Debug, Clone)]
+pub enum IpAddress {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr)
 }
 
+#[derive(Debug, Clone)]
 pub struct CqlStringMap {
     pub pairs: Vec<CqlPair>,
 }
 
+#[derive(Debug, Clone)]
 pub struct CqlPair {
     pub key: &'static str,
     pub value: &'static str,
@@ -241,7 +243,7 @@ pub struct CqlMetadata {
     pub row_metadata: Vec<CqlColMetadata>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Pair<T, V> {
     pub key: T,
     pub value: V
@@ -251,7 +253,7 @@ pub type CQLList = Vec<CqlValue>;
 pub type CQLMap = Vec<Pair<CqlValue, CqlValue>>;
 pub type CQLSet = Vec<CqlValue>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CqlValue {
     CqlASCII(Option<CowStr>),
     CqlBigInt(Option<i64>),
@@ -261,7 +263,7 @@ pub enum CqlValue {
     CqlDecimal(Option<num::BigInt>),
     CqlDouble(Option<f64>),
     CqlFloat(Option<f32>),
-    CqlInet(Option<IpAddr>),
+    CqlInet(Option<IpAddress>),
     CqlInt(Option<i32>),
     CqlList(Option<CQLList>),
     CqlMap(Option<CQLMap>),
@@ -286,22 +288,23 @@ pub struct CqlRows {
     pub rows: Vec<CqlRow>,
 }
 
-pub struct CqlRequest<'a> {
+pub struct CqlRequest {
     pub version: u8,
     pub flags: u8,
     pub stream: i16,
     pub opcode: OpcodeRequest,
-    pub body: CqlRequestBody<'a>,
+    pub body: CqlRequestBody,
 }
 
-pub enum CqlRequestBody<'a> {
+pub enum CqlRequestBody {
     RequestStartup(CqlStringMap),
-    RequestQuery(&'a str, Consistency, u8),
-    RequestPrepare(&'a str),
-    RequestExec(Vec<u8>, &'a [CqlValue], Consistency, u8),
+    RequestCred(Vec<CowStr>),
+    RequestQuery(String, Consistency, u8),
+    RequestPrepare(String),
+    RequestExec(Vec<u8>, Vec<CqlValue>, Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
-    RequestAuthResponse(Vec<u8>),
+    RequestAuthResponse(Vec<u8>)
 }
 
 #[derive(Debug)]
