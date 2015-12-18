@@ -2,12 +2,11 @@ extern crate mio;
 extern crate bytes;
 extern crate eventual;
 
-use self::eventual::{Future,Async};
+use self::eventual::{Future,Async,Complete};
 use self::mio::*;
 use self::mio::tcp::TcpStream;
 use self::mio::util::Slab;
-use self::mio::buf::ByteBuf;
-use self::mio::buf::MutByteBuf;
+use self::mio::buf::{ByteBuf,MutByteBuf};
 use std::{mem, str};
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -57,48 +56,28 @@ impl Client{
         }
     }
     
-    pub fn exec_query(&mut self, query_str: &str, con: Consistency) -> RCResult<CqlResponse> {
+    pub fn async_exec_query(&mut self, query_str: &str, con: Consistency) -> Future<RCResult<CqlResponse>,()> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeQuery,
             body: RequestQuery(String::from(query_str), con, 0)};
-
-        let mut buf = ByteBuf::mut_with_capacity(2048);
-        try_io!(q.serialize(&mut buf,self.version),
-                                    "Couldn't serialitze CqlRequest");
-        let future = self.send_message(buf,TOKEN_1);
-        let mut buf_response = future.await()
-                                    .ok().expect("Couldn't recieve future");
-        let response = try_rc!(buf_response.read_cql_response(self.version), 
-                                    "Error reading response");
-        Ok(response)
+        self.send_message(q,TOKEN_1)
     }
-
-    pub fn exec_prepared(&mut self, ps_id: &str, params: &Vec<CqlValue>, con: Consistency) -> RCResult<CqlResponse> {
-        let mut p = Vec::new();
-        p.clone_from(params);
+    
+    pub fn async_exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> Future<RCResult<CqlResponse>,()>{
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeExecute,
-            body: RequestExec(String::from(ps_id), p, con, 0x01),
+            body: RequestExec(preps.clone(), params.clone(), con, 0x01),
         };
-
-        let mut buf = ByteBuf::mut_with_capacity(2048);
-        try_io!(q.serialize_with_client(&mut buf,self),
-                                    "Error serializing prepared statement execution");
-        let future = self.send_message(buf,TOKEN_1);
-        let mut buf_response = future.await()
-                                    .ok().expect("Couldn't recieve future");
-        let response = try_rc!(buf_response.read_cql_response(self.version), 
-                                    "Error reading response");
-        Ok(response)
+        self.send_message(q,TOKEN_1)
     }
     
-    pub fn exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> RCResult<CqlResponse> {
+    pub fn async_exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> Future<RCResult<CqlResponse>,()> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -117,48 +96,33 @@ impl Client{
 
         serialize_and_check_io_error!(serialize_with_client, &mut file, q, self, "Error serializing to file");
         */
-        let mut buf = ByteBuf::mut_with_capacity(2048);
-        try_io!(q.serialize_with_client(&mut buf,self),
-                                    "Error serializing BATCH request");
-        let future = self.send_message(buf,TOKEN_1);
-        let mut buf_response = future.await()
-                                    .ok().expect("Couldn't recieve future");
-        let response = try_rc!(buf_response.read_cql_response(self.version), 
-                                    "Error reading query");
-        Ok(response)
+        self.send_message(q,TOKEN_1)
     }
 
 
-    pub fn prepared_statement(&mut self, query_str: &str, query_id: &str) -> RCResult<()> {
+    pub fn prepared_statement(&mut self, query_str: &str) -> RCResult<CqlPreparedStat> {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodePrepare,
-            body: RequestPrepare(query_str),
+            body: RequestPrepare(query_str.to_string()),
         };
 
-
-        let mut buf = ByteBuf::mut_with_capacity(2048);
-        try_rc!(q.serialize_with_client(&mut buf, self), "Error serializing prepared statement");
-
-        let future = self.send_message(buf,TOKEN_1);
-        let mut buf_response = future.await()
-                                     .ok().expect("Couldn't recieve future");
-
-        let res = try_rc!(buf_response.read_cql_response(self.version), 
-                                    "Error reading query");
-        match res.body {
+        let future = self.send_message(q,TOKEN_1);
+        let mut cql_response = future.await()
+                                     .ok().expect("Couldn't recieve future")
+                                     .ok().expect("Couldn't get CQL response");
+        match cql_response.body {
             ResultPrepared(preps) => {
-                self.prepared.insert(query_id.to_string(), preps);
-                Ok(())
+                Ok(preps)
             },
             _ => Err(RCError::new("Response does not contain prepared statement", ReadError))
         }
     }
     
 
-    fn send_startup(&mut self, creds: Option<&Vec<CowStr>>,token: Token) -> RCResult<()> {
+    fn send_startup(&mut self, creds: Option<Vec<CowStr>>,token: Token) -> RCResult<()> {
         let body = CqlStringMap {
             pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(self.version-1) as usize]}],
         };
@@ -170,16 +134,12 @@ impl Client{
             body: RequestStartup(body),
         };
 
-        let mut buf = ByteBuf::mut_with_capacity(2048);
-        try_io!(msg_startup.serialize(&mut buf,self.version),
-                                    "Couldn't serialitze CqlRequest");
-        let mut future = self.send_message(buf,token);
-        let mut buf_response = future.await()
-                                    .ok().expect("Couldn't recieve future");
-        let mut response = try_rc!(buf_response.read_cql_response(self.version), 
-                                    "Error reading response");
+        let mut future = self.send_message(msg_startup,token);
+        let mut cql_response = future.await()
+                                     .ok().expect("Couldn't recieve future")
+                                     .ok().expect("Couldn't get CQL response");
         
-        match response.body {
+        match cql_response.body {
             ResponseReady =>  Ok(()),
             ResponseAuth(_) => {
                 match creds {
@@ -191,12 +151,11 @@ impl Client{
                             opcode: OpcodeOptions,
                             body: RequestCred(cred),
                         };
-                        let mut buf2 = ByteBuf::mut_with_capacity(2048);
-                        try_io!(msg_startup.serialize(&mut buf2,self.version),"Couldn't serialitze CqlRequest");
-                        future = self.send_message(buf2,token);
-                        buf_response = future.await().ok().expect("Couldn't recieve future");
-                        response = try_rc!(buf_response.read_cql_response(self.version), "Error reading authenticaton response");
-                        match response.body {
+                        future = self.send_message(msg_auth,token);
+                        cql_response = future.await()
+                                             .ok().expect("Couldn't recieve future")
+                                             .unwrap();
+                        match cql_response.body {
                             ResponseReady => Ok(()),
                             ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
                             _ => Err(RCError::new("Server returned unknown message", ReadError))
@@ -210,16 +169,16 @@ impl Client{
         }
     }
 
-    fn send_message(&mut self,buf: MutByteBuf,token:Token) -> Future<ByteBuf, ()>{
-        let (tx, future) = Future::<ByteBuf, ()>::pair();
+    fn send_message(&mut self,request: CqlRequest,token:Token) -> Future<RCResult<CqlResponse>, ()>{
+        let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
         self.pool.find_channel_by_token(token)
-                 .send(MyMsg { 
-                        buf: buf.flip(), 
+                 .send(CqlMsg { 
+                        request: request, 
                         tx: tx});
         future
     }
 
-    fn add_connection(&mut self ,socket: TcpStream,token:Token){
+    fn run_event_loop_with_connection(&mut self ,socket: TcpStream,token:Token){
         let mut event_loop : EventLoop<Connection> = mio::EventLoop::new().ok().expect("Couldn't create event loop");
         println!("Adding connection!!");
         self.pool.add_channel_with_token(event_loop.channel(),token);
@@ -229,24 +188,26 @@ impl Client{
                 token,
                 mio::EventSet::writable(),
                 mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
-        //We'll need the event loop to register a new socket
+        //We will need the event loop to register a new socket
         //But on creating the thread we borrow the even_loop
         let mut connection =  Connection {
                 socket: socket,
                 token: token,
                 state: State::Waiting,
-                completed: None};
+                pendings: Vec::new(),
+                version: self.version
+            };
 
         println!("Even loop starting...");
         //We only keep event loop channel
         thread::spawn(move||{
-            event_loop.run(&mut connection).ok().expect("Failed to start event loop");
+                event_loop.run(&mut connection).ok().expect("Failed to start event loop");
             });
     }
 }
 
 
-pub fn connect(address: SocketAddr, creds:Option<&Vec<CowStr>>) -> RCResult<Client> {
+pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Client> {
 
         let mut version = CQL_MAX_SUPPORTED_VERSION;
         println!("At [method] Client::connect");
@@ -259,27 +220,28 @@ pub fn connect(address: SocketAddr, creds:Option<&Vec<CowStr>>) -> RCResult<Clie
             let token = Token(1);
             let mut socket = res.unwrap();
             let mut client = Client::new(version);
-            client.add_connection(socket,token);
-            //There's no shutdown yet..
-            match client.send_startup(creds,token) {
+            //There is no shutdown yet
+            client.run_event_loop_with_connection(socket,token);
+
+            match client.send_startup(creds.clone(),token) {
                 Ok(_) => return Ok(client),
                 Err(e) => println!("Error connecting with protocol version v{}: {}", version, e.desc)
             }
             version -= 1;
         }
         Err(RCError::new("Unable to find suitable protocol version (v1, v2, v3)", ReadError))
-
     }
     
 
-pub struct MyMsg {
-    buf: ByteBuf,
-    tx: eventual::Complete<ByteBuf,()>
+pub struct CqlMsg {
+    request: CqlRequest,
+    tx: Complete<RCResult<CqlResponse>,()>
 }
 
-
+// The idea is to have a set of event loop channels
+// to send the CqlRequests. 
 pub struct Pool {
-    connections: Slab<Sender<MyMsg>>
+    channels: Slab<Sender<CqlMsg>>
 }
 
 impl Pool {
@@ -287,67 +249,74 @@ impl Pool {
         Pool {
             // Allocate a slab that is able to hold exactly the right number of
             // connections.
-            connections: Slab::new_starting_at(Token(1),128)
+            channels: Slab::new_starting_at(Token(1),128)
         }
     }
-    /// Find a connection in the slab using the given token.
-    fn find_channel_by_token<'a>(&'a mut self, token: Token) -> &'a mut Sender<MyMsg> {
-        &mut self.connections[token]
+    // Find a channel in the slab using the given token.
+    fn find_channel_by_token<'a>(&'a mut self, token: Token) -> &'a mut Sender<CqlMsg> {
+        &mut self.channels[token]
     }
-    fn add_channel_with_token(& mut self,channel: Sender<MyMsg>,token: Token){
-        self.connections.insert_with(|token| {channel});
+    fn add_channel_with_token(& mut self,channel: Sender<CqlMsg>,token: Token){
+        self.channels.insert_with(|token| {channel});
     }
 }
 
 impl mio::Handler for Connection {
     type Timeout = ();
-    type Message = MyMsg;
+    type Message = CqlMsg;
 
-    fn notify(&mut self, event_loop: &mut EventLoop<Connection>, msg: MyMsg) {
-        //println!("[Connection::notify]");
-        self.set_state(event_loop,State::Writing(msg.buf));
-        self.write(event_loop);
-        //Transition to reading is called after write
-        //Now we can read from the socket
-        //println!("We are going to read..");
-        self.completed = Some(msg.tx); 
+    // Push pending messages to be send
+    // across the event loop. Only change state in case it is waiting
+    fn notify(&mut self, event_loop: &mut EventLoop<Connection>, msg: CqlMsg) {
+        println!("[Connection::notify]");
+        match self.state {
+            State::Waiting(..) => {
+                self.set_state(event_loop,State::Writing);
+                // Ineficient, consider using a LinkedList
+                self.pendings.insert(0,msg); 
+            }
+            _ => {
+                self.pendings.insert(0,msg);
+            }
+        }
     }
 
-    //There's no shutdown by now
+    
     fn ready(&mut self, event_loop: &mut mio::EventLoop<Connection>, token: mio::Token, events: mio::EventSet) {
-        println!("[Connection::ready]");
-        
+        println!("[Connection::ready]");      
         println!("Assigned token is: {:?}",self.token);
 
-        // Check the current state of the connection and handle the event
-        // appropriately.
         match self.state {
             State::Reading(..) => {
                 println!("    connection-state=Reading");
                 assert!(events.is_readable(), "unexpected events; events={:?}", events);
                 self.read(event_loop);
-                let bytes_buf = self.state.read_buf().bytes();   
-                //De moment fem la copia perque no deixa obtenir el read buffer directament
 
-                let response : ByteBuf = ByteBuf::from_slice(bytes_buf);
-
-                self.completed.take().unwrap().complete(response); //Take leaves a None
+                let mut response = self.state.read_cql_response(self.version);
+                // Completes the future with a CqlResponse
+                // CqlMsg contains a RCResult<CqlResponse>
+                // so we can handle errors
+                self.pendings.pop()
+                             .take()
+                             .unwrap()
+                             .tx.complete(response); 
                 
             }
-            /*
             State::Writing(..) => {
                 println!("    connection-state=Writing");
                 assert!(events.is_writable(), "unexpected events; events={:?}", events);
-                self.write(event_loop)
+                self.write(event_loop,token)
             }
-            */
             State::Closed(..) => {
                 println!("    connection-state=Closed");
                 event_loop.shutdown();
             }
             _ => (),
         }
-        
+
+        if self.pendings.len() == 0 {
+            self.state.transition_to_waiting();
+        }
         println!("[Connection::Ended ready]");
     }
 }
@@ -358,14 +327,15 @@ struct Connection {
     socket: TcpStream,
     // The token used to register this connection with the EventLoop
     token: mio::Token,
-    // The current state of the connection (reading or writing)
+    // The current state of the connection (reading, writing or waiting)
     state: State,
-
-    completed: Option<eventual::Complete<ByteBuf,()>>
+    // Pending messages to be send (CQL requests)
+    pendings: Vec<CqlMsg>,
+    // CQL version v1, v2 or v3
+    version: u8
 }
 
 impl Connection {
-
 
     fn read(&mut self, event_loop: &mut mio::EventLoop<Connection>) {
         match self.socket.try_read_buf(self.state.mut_read_buf()) {
@@ -393,8 +363,14 @@ impl Connection {
         }
     }
 
-    fn write(&mut self, event_loop: &mut mio::EventLoop<Connection>) {
-        match self.socket.try_write_buf(self.state.mut_write_buf()) {
+    fn write(&mut self, event_loop: &mut mio::EventLoop<Connection>,token: Token) {
+        let mut buf = ByteBuf::mut_with_capacity(2048);
+        
+        self.pendings.last_mut()
+                     .unwrap()
+                     .request.serialize(&mut buf,self.version);
+        match self.socket.try_write_buf(&mut buf.flip()) 
+            {
             Ok(Some(n)) => {
                 println!("Written {} bytes",n);
                 // If the entire buffer has been written, transition to the
@@ -431,17 +407,13 @@ impl Connection {
             .unwrap();
     }
 
+    #[inline]
     fn set_state(&mut self,event_loop: &mut mio::EventLoop<Connection>,state: State){
         self.state = state;
-        let event_set = match self.state {
-            State::Reading(..) => mio::EventSet::readable(),
-            State::Writing(..) => mio::EventSet::writable(),
-            _ => return,
-        };
-        event_loop.reregister(&self.socket, self.token, event_set, mio::PollOpt::oneshot())
-            .unwrap();
+        self.reregister(event_loop);
     }
-
+    
+    #[inline]
     fn is_closed(&self) -> bool {
         match self.state {
             State::Closed => true,
@@ -450,10 +422,9 @@ impl Connection {
     }
 }
 
-//#[derive(Debug)]
 enum State {
     Reading(MutByteBuf),
-    Writing(ByteBuf),
+    Writing,
     Waiting,
     Closed
 }
@@ -461,51 +432,27 @@ enum State {
 impl State {
     
     fn try_transition_to_reading(&mut self) {
-        if !self.write_buf().has_remaining() {
-            self.transition_to_reading();
-        }
+        //if !self.write_buf().has_remaining() {
+        self.transition_to_reading();
+        //}
     }
     
-    //Dangerous function
+    //
     fn transition_to_reading(&mut self) {
         //println!("[State::transition_to_reading");
-        let mut buf = mem::replace(self, State::Closed)
-            .unwrap_write_buf();
+        //let mut buf = mem::replace(self, State::Closed)
+        //    .unwrap_write_buf();
 
-        let mut mut_buf = buf.flip();
-        mut_buf.clear();
+        //let mut mut_buf = buf.flip();
+        //mut_buf.clear();
         //println!("[State::transition_to_reading] Ending..");
-        *self = State::Reading(mut_buf);
+        *self = State::Reading(ByteBuf::mut_with_capacity(2048));
     }
 
-    /*
-    fn try_transition_to_writing(&mut self, remaining: &mut Vec<Vec<u8>>) {
-        match self.read_buf().last() {
-            Some(&c) if c == b'\n' => {
-                // Wrap in a scope to work around borrow checker
-                {
-                    // Get a string back
-                    let s = str::from_utf8(self.read_buf()).unwrap();
-                    println!("Got from server: {}", s);
-                }
-
-                //self.transition_to_writing(remaining);
-            }
-            _ => {}
-        }
+    fn transition_to_waiting(&mut self){
+        *self = State::Waiting;
     }
-    */
-    /*
-    fn transition_to_writing(&mut self, remaining: &mut Vec<Vec<u8>>) {
-        if remaining.is_empty() {
-            *self = State::Closed;
-            return;
-        }
 
-        let line = remaining.remove(0);
-        *self = State::Writing(Cursor::new(line));
-    }
-    */
     fn read_buf(&self) -> &MutByteBuf {
         match *self {
             State::Reading(ref buf) => buf,
@@ -527,6 +474,18 @@ impl State {
         }
     }
 
+    fn read_cql_response(&self,version: u8) -> RCResult<CqlResponse>{
+        match *self {
+            State::Reading(ref buf) => {
+                let bytes_buf = self.read_buf().bytes();   
+                //By now, just copy it to avoid borrowing troubles
+                let mut response : ByteBuf = ByteBuf::from_slice(bytes_buf);
+                response.read_cql_response(version)
+            },
+            _ => panic!("connection not in reading state"),
+        }
+    }
+    /*
     fn write_buf(&self) -> &ByteBuf {
         match *self {
             State::Writing(ref buf) => buf,
@@ -547,4 +506,5 @@ impl State {
             _ => panic!("connection not in writing state"),
         }
     }
+    */
 }
