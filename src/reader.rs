@@ -36,7 +36,7 @@ pub trait CqlReader {
     fn read_cql_blob(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Vec<u8>>>;
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>>;
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>>;
+    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>>;
@@ -147,14 +147,14 @@ impl<T: std::io::Read> CqlReader for T {
         }      
     }
 
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>> {
+    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>> {
         let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
         if vec.len() == 0 {
             Ok(None)
         } else if vec.len() == 4 {
-            Ok(Some(IpAddr::Ipv4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3]))))
+            Ok(Some(IpAddress::Ipv4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3]))))
         } else {
-            Ok(Some(IpAddr::Ipv6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
+            Ok(Some(IpAddress::Ipv6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
               vec[3] as u16 + ((vec[2] as u16) << 8),
               vec[5] as u16 + ((vec[4] as u16) << 8),
               vec[7] as u16 + ((vec[6] as u16) << 8),
