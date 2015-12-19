@@ -30,13 +30,9 @@ pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
 pub static TOKEN_1 : Token = Token(1);
 
-pub type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
-
-
 pub struct Client {
     pool: Pool, //Conjunt de channels
-    pub version: u8,
-    prepared: PrepsStore
+    pub version: u8
 }
 
 impl Client{
@@ -44,18 +40,10 @@ impl Client{
     fn new(version:u8) -> Client {
         Client{
             pool: Pool::new(),
-            version: version,
-            prepared: BTreeMap::new()
+            version: version
         }
     }
-    
-    pub fn get_prepared_statement(&mut self, ps_id: &str) -> RCResult<&CqlPreparedStat> {
-        match self.prepared.get(ps_id) {
-            Some(ps) => Ok(&**ps),
-            None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
-        }
-    }
-    
+        
     pub fn async_exec_query(&mut self, query_str: &str, con: Consistency) -> Future<RCResult<CqlResponse>,()> {
         let q = CqlRequest {
             version: self.version,
