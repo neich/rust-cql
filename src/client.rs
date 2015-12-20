@@ -54,7 +54,7 @@ impl Client{
         }
     }
     
-    pub fn async_exec_query(&mut self, query_str: &str, con: Consistency) -> CassFuture {
+    pub fn exec_query(&mut self, query_str: &str, con: Consistency) -> CassFuture {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -64,7 +64,7 @@ impl Client{
         self.send_message(q)
     }
     
-    pub fn async_exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> CassFuture{
+    pub fn exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> CassFuture{
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -75,7 +75,7 @@ impl Client{
         self.send_message(q)
     }
     
-    pub fn async_exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> CassFuture {
+    pub fn exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> CassFuture {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -247,9 +247,9 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Clien
             }
             let mut socket = res.unwrap();
             let mut client = Client::new(version);
-            //There is no shutdown yet
+            // Shutdown is not needed here because
+            // a client is created each loop
             client.run_event_loop_with_connection(socket);
-
             match client.send_startup(creds.clone()) {
                 Ok(_) => return Ok(client),
                 Err(e) => println!("Error connecting with protocol version v{}: {}", version, e.desc)
