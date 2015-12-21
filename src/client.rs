@@ -28,10 +28,10 @@ use super::reader::*;
 pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
-pub static TOKEN_1 : Token = Token(1);
+pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
 pub struct Client {
-    pool: Pool, //Conjunt de channels
+    pool: Pool, //Set of channels
     pub version: u8
 }
 
@@ -43,18 +43,18 @@ impl Client{
             version: version
         }
     }
-        
-    pub fn async_exec_query(&mut self, query_str: &str, con: Consistency) -> Future<RCResult<CqlResponse>,()> {
+    
+    pub fn exec_query(&mut self, query_str: &str, con: Consistency) -> CassFuture {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
             opcode: OpcodeQuery,
             body: RequestQuery(String::from(query_str), con, 0)};
-        self.send_message(q,TOKEN_1)
+        self.send_message(q)
     }
     
-    pub fn async_exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> Future<RCResult<CqlResponse>,()>{
+    pub fn exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> CassFuture{
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -62,10 +62,10 @@ impl Client{
             opcode: OpcodeExecute,
             body: RequestExec(preps.clone(), params.clone(), con, 0x01),
         };
-        self.send_message(q,TOKEN_1)
+        self.send_message(q)
     }
     
-    pub fn async_exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> Future<RCResult<CqlResponse>,()> {
+    pub fn exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> CassFuture {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -84,7 +84,7 @@ impl Client{
 
         serialize_and_check_io_error!(serialize_with_client, &mut file, q, self, "Error serializing to file");
         */
-        self.send_message(q,TOKEN_1)
+        self.send_message(q)
     }
 
 
@@ -97,7 +97,7 @@ impl Client{
             body: RequestPrepare(query_str.to_string()),
         };
 
-        let future = self.send_message(q,TOKEN_1);
+        let future = self.send_message(q);
         let mut cql_response = future.await()
                                      .ok().expect("Couldn't recieve future")
                                      .ok().expect("Couldn't get CQL response");
@@ -125,7 +125,7 @@ impl Client{
         return token;
     }
 
-    fn send_startup(&mut self, creds: Option<Vec<CowStr>>,token: Token) -> RCResult<()> {
+    fn send_startup(&mut self, creds: Option<Vec<CowStr>>) -> RCResult<()> {
         let body = CqlStringMap {
             pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(self.version-1) as usize]}],
         };
@@ -137,7 +137,7 @@ impl Client{
             body: RequestStartup(body),
         };
 
-        let mut future = self.send_message(msg_startup, token);
+        let mut future = self.send_message(msg_startup);
         let mut cql_response = future.await()
                                      .ok().expect("Couldn't recieve future")
                                      .ok().expect("Couldn't get CQL response");
@@ -156,7 +156,7 @@ impl Client{
                                     opcode: OpcodeAuthResponse,
                                     body: RequestAuthResponse(self.make_token(cred)),
                                 };
-                                let response = self.send_message(msg_auth, token).await().ok().expect("Couldn't recieve future").ok().expect("Couldn't get CQL response");
+                                let response = self.send_message(msg_auth).await().ok().expect("Couldn't recieve future").ok().expect("Couldn't get CQL response");
                                 match response.body {
                                     ResponseAuthSuccess(_) => Ok(()),
                                     ResponseError(_, ref msg) => Err(RCError::new(format!("Error in authentication: {}", msg), ReadError)),
@@ -177,27 +177,38 @@ impl Client{
         }
     }
 
-    fn send_message(&mut self,request: CqlRequest,token:Token) -> Future<RCResult<CqlResponse>, ()>{
+    fn send_message(&mut self,request: CqlRequest) -> CassFuture{
         let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
-        self.pool.find_channel_by_token(token)
-                 .send(CqlMsg { 
-                        request: request, 
-                        tx: tx});
+        match self.pool.find_available_channel(){
+            Ok(channel) => {
+                channel.send(CqlMsg::Request{
+                                request: request,
+                                tx: tx});
+            },
+            Err(e) => {
+                tx.complete(Err(RCError::new("Sending error", IOError)));
+            },
+        }
         future
     }
 
-    fn run_event_loop_with_connection(&mut self ,socket: TcpStream,token:Token){
-        let mut event_loop : EventLoop<Connection> = mio::EventLoop::new().ok().expect("Couldn't create event loop");
-        println!("Adding connection!!");
-        self.pool.add_channel_with_token(event_loop.channel(),token);
-        println!("It's seems we could add a connection ");
+
+    fn run_event_loop_with_connection(&mut self ,socket: TcpStream){
+        let mut event_loop : EventLoop<Connection> = 
+                mio::EventLoop::new().ok().expect("Couldn't create event loop");
+        // It will be changed depending how it is decided to handle multiple connections and event loops
+        let token = Token(1);
+        println!("Adding connection");
+        self.pool.add_channel(event_loop.channel());
+        println!("It seems we could add a connection ");
         event_loop.register(
                 &socket,
                 token,
                 mio::EventSet::writable(),
                 mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
-        //We will need the event loop to register a new socket
-        //But on creating the thread we borrow the even_loop
+        // We will need the event loop to register a new socket
+        // but on creating the thread we borrow the even_loop.
+        // So we 'give away' the connection and keep the channel.
         let mut connection =  Connection {
                 socket: socket,
                 token: token,
@@ -207,12 +218,13 @@ impl Client{
             };
 
         println!("Even loop starting...");
-        //We only keep event loop channel
+        // Only keep event loop channel
         thread::spawn(move||{
                 event_loop.run(&mut connection).ok().expect("Failed to start event loop");
             });
     }
 }
+
 
 
 pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Client> {
@@ -225,68 +237,97 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Clien
             if res.is_err() {
                 return Err(RCError::new(format!("Failed to connect to server at {}", address), ConnectionError));
             }
-            let token = Token(1);
             let mut socket = res.unwrap();
             let mut client = Client::new(version);
-            //There is no shutdown yet
-            client.run_event_loop_with_connection(socket,token);
-
-            match client.send_startup(creds.clone(),token) {
+            // Shutdown is not needed here because
+            // a client is created each loop
+            client.run_event_loop_with_connection(socket);
+            match client.send_startup(creds.clone()) {
                 Ok(_) => return Ok(client),
                 Err(e) => println!("Error connecting with protocol version v{}: {}", version, e.desc)
             }
+
             version -= 1;
         }
         Err(RCError::new("Unable to find suitable protocol version (v1, v2, v3)", ReadError))
     }
     
-
-pub struct CqlMsg {
-    request: CqlRequest,
-    tx: Complete<RCResult<CqlResponse>,()>
+pub enum CqlMsg{
+    Request{
+        request: CqlRequest,
+        tx: Complete<RCResult<CqlResponse>,()>
+    },
+    Shutdown
 }
 
-// The idea is to have a set of event loop channels
-// to send the CqlRequests. 
+// The idea is to have a set of event loop channels to send 
+// the CqlRequests. This will be changed when we decide how 
+// to manage our event loops (connections) but for now it is
+// only use one event loop and so one channel
 pub struct Pool {
-    channels: Slab<Sender<CqlMsg>>
+    channels: Vec<Sender<CqlMsg>>
 }
 
 impl Pool {
     fn new() -> Pool {
         Pool {
-            // Allocate a slab that is able to hold exactly the right number of
-            // connections.
-            channels: Slab::new_starting_at(Token(1),128)
+            channels: Vec::new()
         }
     }
-    // Find a channel in the slab using the given token.
-    fn find_channel_by_token<'a>(&'a mut self, token: Token) -> &'a mut Sender<CqlMsg> {
-        &mut self.channels[token]
+    fn add_channel(&mut self, channel: Sender<CqlMsg>){
+        self.channels.push(channel);
     }
-    fn add_channel_with_token(& mut self,channel: Sender<CqlMsg>,token: Token){
-        self.channels.insert_with(|token| {channel});
+    // For now only use one channel (and one event loop)
+    fn find_available_channel(&mut self) -> Result<&Sender<CqlMsg>,&'static str>{
+        if self.channels.len() > 0 {
+            return Ok(self.channels.last().unwrap());
+        }
+        Err("There is no channel created")
     }
+}
+
+struct Connection {
+    // The connection's TCP socket 
+    socket: TcpStream,
+    // The token used to register this connection with the EventLoop
+    token: mio::Token,
+    // The current state of the connection (reading, writing or waiting)
+    state: State,
+    // Pending messages to be send (CQL requests)
+    pendings: Vec<CqlMsg>,
+    // CQL version v1, v2 or v3
+    version: u8
 }
 
 impl mio::Handler for Connection {
     type Timeout = ();
-    type Message = CqlMsg;
+    // Left one is the internal Handler message type and
+    // right one is our defined type
+    type Message = CqlMsg; 
 
-    // Push pending messages to be send
-    // across the event loop. Only change state in case it is waiting
+    // Push pending messages to be send across the event 
+    // loop. Only change state in case it is waiting
     fn notify(&mut self, event_loop: &mut EventLoop<Connection>, msg: CqlMsg) {
         println!("[Connection::notify]");
-        match self.state {
-            State::Waiting(..) => {
-                self.set_state(event_loop,State::Writing);
-                // Ineficient, consider using a LinkedList
-                self.pendings.insert(0,msg); 
-            }
-            _ => {
-                self.pendings.insert(0,msg);
-            }
+        match msg {
+            CqlMsg::Request{..} => {
+                match self.state {
+                    State::Waiting(..) => {
+                        self.set_state(event_loop,State::Writing);
+                        // Ineficient, consider using a LinkedList
+                        self.pendings.insert(0,msg); 
+                    }
+                    _ => {
+                        self.pendings.insert(0,msg);
+                    }
+                }
+            },
+            CqlMsg::Shutdown => {
+                //Maybe don't reregister in this set state?
+                self.set_state(event_loop,State::Closed);
+            },
         }
+
     }
 
     
@@ -302,13 +343,20 @@ impl mio::Handler for Connection {
 
                 let mut response = self.state.read_cql_response(self.version);
                 // Completes the future with a CqlResponse
-                // CqlMsg contains a RCResult<CqlResponse>
-                // so we can handle errors
-                self.pendings.pop()
-                             .take()
-                             .unwrap()
-                             .tx.complete(response); 
-                
+                // which is a RCResult<CqlResponse>
+                // so we can handle errors properly
+                match self.pendings
+                          .pop()
+                          .take()
+                          .unwrap() 
+                    {
+                    CqlMsg::Request{request,tx} => {
+                       tx.complete(response);
+                    },
+                    CqlMsg::Shutdown => {
+                        panic!("Shutdown messages shouldn't be at pendings");
+                    },
+                }
             }
             State::Writing(..) => {
                 println!("    connection-state=Writing");
@@ -329,20 +377,6 @@ impl mio::Handler for Connection {
     }
 }
 
-
-struct Connection {
-    // The connection's TCP socket 
-    socket: TcpStream,
-    // The token used to register this connection with the EventLoop
-    token: mio::Token,
-    // The current state of the connection (reading, writing or waiting)
-    state: State,
-    // Pending messages to be send (CQL requests)
-    pendings: Vec<CqlMsg>,
-    // CQL version v1, v2 or v3
-    version: u8
-}
-
 impl Connection {
 
     fn read(&mut self, event_loop: &mut mio::EventLoop<Connection>) {
@@ -353,8 +387,6 @@ impl Connection {
             }
             Ok(Some(n)) => {
                 println!("read {} bytes", n);
-
-                //self.state.try_transition_to_writing(&mut self.remaining);
 
                 // Re-register the socket with the event loop. The current
                 // state is used to determine whether we are currently reading
@@ -373,10 +405,18 @@ impl Connection {
 
     fn write(&mut self, event_loop: &mut mio::EventLoop<Connection>,token: Token) {
         let mut buf = ByteBuf::mut_with_capacity(2048);
-        
-        self.pendings.last_mut()
-                     .unwrap()
-                     .request.serialize(&mut buf,self.version);
+        match self.pendings
+                  .pop()
+                  .unwrap()
+             {
+             CqlMsg::Request{request,tx} => {
+                request.serialize(&mut buf,self.version);
+                self.pendings.push(CqlMsg::Request{request:request,tx:tx});
+             },
+             CqlMsg::Shutdown => {
+                panic!("Shutdown messages shouldn't be at pendings");
+             },
+        }
         match self.socket.try_write_buf(&mut buf.flip()) 
             {
             Ok(Some(n)) => {
@@ -398,6 +438,7 @@ impl Connection {
                 panic!("got an error trying to read; err={:?}", e);
             }
         }
+
         println!("Ended write"); 
     }
 
@@ -440,20 +481,11 @@ enum State {
 impl State {
     
     fn try_transition_to_reading(&mut self) {
-        //if !self.write_buf().has_remaining() {
         self.transition_to_reading();
-        //}
     }
     
-    //
-    fn transition_to_reading(&mut self) {
-        //println!("[State::transition_to_reading");
-        //let mut buf = mem::replace(self, State::Closed)
-        //    .unwrap_write_buf();
 
-        //let mut mut_buf = buf.flip();
-        //mut_buf.clear();
-        //println!("[State::transition_to_reading] Ending..");
+    fn transition_to_reading(&mut self) {
         *self = State::Reading(ByteBuf::mut_with_capacity(2048));
     }
 
@@ -493,26 +525,4 @@ impl State {
             _ => panic!("connection not in reading state"),
         }
     }
-    /*
-    fn write_buf(&self) -> &ByteBuf {
-        match *self {
-            State::Writing(ref buf) => buf,
-            _ => panic!("connection not in writing state"),
-        }
-    }
-
-    fn mut_write_buf(&mut self) -> &mut ByteBuf{
-        match *self {
-            State::Writing(ref mut buf) => buf,
-            _ => panic!("connection not in writing state"),
-        }
-    }
-
-    fn unwrap_write_buf(self) -> ByteBuf {
-        match self {
-            State::Writing(buf) => buf,
-            _ => panic!("connection not in writing state"),
-        }
-    }
-    */
 }
