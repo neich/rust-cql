@@ -202,6 +202,7 @@ impl Client{
         future
     }
 
+
     fn run_event_loop_with_connection(&mut self ,socket: TcpStream){
         let mut event_loop : EventLoop<Connection> = 
                 mio::EventLoop::new().ok().expect("Couldn't create event loop");
@@ -233,6 +234,7 @@ impl Client{
             });
     }
 }
+
 
 
 pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Client> {
