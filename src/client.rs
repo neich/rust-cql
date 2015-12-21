@@ -28,13 +28,11 @@ use super::reader::*;
 pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 
-pub type PrepsStore = BTreeMap<String, Box<CqlPreparedStat>>;
 pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
 pub struct Client {
     pool: Pool, //Set of channels
-    pub version: u8,
-    prepared: PrepsStore
+    pub version: u8
 }
 
 impl Client{
@@ -42,15 +40,7 @@ impl Client{
     fn new(version:u8) -> Client {
         Client{
             pool: Pool::new(),
-            version: version,
-            prepared: BTreeMap::new()
-        }
-    }
-    
-    pub fn get_prepared_statement(&mut self, ps_id: &str) -> RCResult<&CqlPreparedStat> {
-        match self.prepared.get(ps_id) {
-            Some(ps) => Ok(&**ps),
-            None => return Err(RCError::new(format!("Unknown prepared statement <{}>", ps_id), GenericError))
+            version: version
         }
     }
     
