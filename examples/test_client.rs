@@ -39,7 +39,10 @@ fn main() {
 
 fn test_client() {
     println!("Connecting ...!");
-    let mut client = try_test!(cql::connect("127.0.0.1:9042".parse().ok().expect("Couldn't parse address"),None), "Error connecting to server at 127.0.0.1:9042");
+    let ip = "172.17.0.2";
+    let port = "9042";
+    let ip_port = ip.to_string()+":"+port;
+    let mut client = try_test!(cql::connect(ip_port.parse().ok().expect("Couldn't parse address"),None), "Error connecting to server at "+ip_port);
     println!("Connected with CQL binary version v{}", client.version);
 
     let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
@@ -49,4 +52,5 @@ fn test_client() {
     let response = try_test!(future.await().unwrap(),"Error sending register to events");
     //assert_response!(response);
     println!("Result: {:?} \n", response);
+
 }
