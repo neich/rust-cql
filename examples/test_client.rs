@@ -47,10 +47,14 @@ fn test_client() {
 
     let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
                                             cql::CqlVarchar(Some((Cow::Borrowed("STATUS_CHANGE")))) ];
-    //thread::sleep_ms(2000); //Sleep because cassandra may not be ready for register
+
     let future = client.send_register(params);
     let response = try_test!(future.await().unwrap(),"Error sending register to events");
     //assert_response!(response);
     println!("Result: {:?} \n", response);
+
+    // A long sleep because I'm trying to see if Cassandra sends 
+    // any event message after a node change his status to up.
+    thread::sleep_ms(600000);
 
 }
