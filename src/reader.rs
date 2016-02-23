@@ -37,6 +37,7 @@ pub trait CqlReader {
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>>;
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
     fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>>;
+    fn read_cql_list_events(&mut self, val_type: CqlBytesSize) -> RCResult<CQLList>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>>;
@@ -178,6 +179,21 @@ impl<T: std::io::Read> CqlReader for T {
             list.push(col);
         }
         Ok(Some(list))
+    }
+
+    fn read_cql_list_events(&mut self, val_type: CqlBytesSize) -> RCResult<CQLList> {
+        try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
+        let len = match val_type {
+            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
+        };
+
+        let mut list: CQLList = vec![];
+        for _ in 0 .. len {
+            let col = try_rc!(self.read_cql_str(val_type), "Error reading list value");
+            list.push(CqlVarchar(col));
+        }
+        Ok(list)
     }
 
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>> {
@@ -486,6 +502,9 @@ impl<T: std::io::Read> CqlReader for T {
             }
             OpcodeAuthSuccess => {
                 ResponseAuthSuccess(try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading ResponseAuthSuccess"))
+            }
+            OpcodeEvent => {
+                ResponseEvent(try_rc!(reader.read_cql_list_events(CqlBytesSize::Cqli16), "Error reading ResponseEvent"))
             }
             _ => {
                 ResultUnknown

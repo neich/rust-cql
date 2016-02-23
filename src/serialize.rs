@@ -93,7 +93,6 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
         let len = (self.len(version)-8) as u32;
         let ocode = self.opcode as u8;
         serialize_header(buf, &version, &self.flags, &self.stream, &ocode, &len);
-        
         match self.body {
             RequestExec(ref preps, ref params, ref cons, flags) => {
                 try_bo!(buf.write_i16::<BigEndian>(preps.len() as i16), "Error serializing EXEC request (id length)");
@@ -150,6 +149,18 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
                 try_io!(buf.write(token), "Error serializing CqlRequest (token)");
                 Ok(())
             },
+            RequestRegister(ref params) => {
+                let len = params.len();              
+                if version >= 3 {
+                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing Register (params length)")
+                } else {
+                    try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing Register (params length)")
+                }
+                for v in params.iter() {
+                    v.serialize_size(buf, Cqli16, version);
+                }
+                Ok(())
+            },
             _ => Ok(())
         }
     }
@@ -177,7 +188,10 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
             },
             RequestAuthResponse(ref token) => {
                 4 + token.len()
-            }
+            },
+            RequestRegister(ref params) => {
+                4 + params.len()
+            },
             _ => 0
         }
     }

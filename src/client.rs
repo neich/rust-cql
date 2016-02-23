@@ -192,36 +192,46 @@ impl Client{
         future
     }
 
+    pub fn send_register(&mut self,params: Vec<CqlValue>) -> CassFuture{
+        let msg_register = CqlRequest {
+            version: self.version,
+            flags: 0x00,
+            stream: 0x01,  
+            opcode: OpcodeRegister,
+            body: RequestRegister(params)
+        };
+        self.send_message(msg_register)
+    }
 
     fn run_event_loop_with_connection(&mut self ,socket: TcpStream){
         let mut event_loop : EventLoop<Connection> = 
-                mio::EventLoop::new().ok().expect("Couldn't create event loop");
+            mio::EventLoop::new().ok().expect("Couldn't create event loop");
         // It will be changed depending how it is decided to handle multiple connections and event loops
         let token = Token(1);
         println!("Adding connection");
         self.pool.add_channel(event_loop.channel());
         println!("It seems we could add a connection ");
         event_loop.register(
-                &socket,
-                token,
-                mio::EventSet::writable(),
-                mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
+            &socket,
+            token,
+            mio::EventSet::writable(),
+            mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
         // We will need the event loop to register a new socket
         // but on creating the thread we borrow the even_loop.
         // So we 'give away' the connection and keep the channel.
         let mut connection =  Connection {
-                socket: socket,
-                token: token,
-                state: State::Waiting,
-                pendings: Vec::new(),
-                version: self.version
-            };
+            socket: socket,
+            token: token,
+            state: State::Waiting,
+            pendings: Vec::new(),
+            version: self.version
+        };
 
         println!("Even loop starting...");
         // Only keep event loop channel
         thread::spawn(move||{
-                event_loop.run(&mut connection).ok().expect("Failed to start event loop");
-            });
+            event_loop.run(&mut connection).ok().expect("Failed to start event loop");
+        });
     }
 }
 
@@ -234,19 +244,21 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Clien
 
         while version >= 0x01 {
             let res = TcpStream::connect(&address);
+
             if res.is_err() {
                 return Err(RCError::new(format!("Failed to connect to server at {}", address), ConnectionError));
             }
             let mut socket = res.unwrap();
+            println!("Ip of the own socket is {}",socket.local_addr().unwrap());
             let mut client = Client::new(version);
             // Shutdown is not needed here because
             // a client is created each loop
             client.run_event_loop_with_connection(socket);
+            println!("{}",version);
             match client.send_startup(creds.clone()) {
                 Ok(_) => return Ok(client),
                 Err(e) => println!("Error connecting with protocol version v{}: {}", version, e.desc)
             }
-
             version -= 1;
         }
         Err(RCError::new("Unable to find suitable protocol version (v1, v2, v3)", ReadError))

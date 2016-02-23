@@ -304,7 +304,8 @@ pub enum CqlRequestBody {
     RequestExec(Vec<u8>, Vec<CqlValue>, Consistency, u8),
     RequestBatch(Vec<Query>, BatchType, Consistency, u8),
     RequestOptions,
-    RequestAuthResponse(Vec<u8>)
+    RequestAuthResponse(Vec<u8>),
+    RequestRegister(Vec<CqlValue>)
 }
 
 #[derive(Debug)]
@@ -323,6 +324,7 @@ pub enum CqlResponseBody {
     ResponseAuthenticate(CowStr),
     ResponseAuthChallenge(Vec<u8>),
     ResponseAuthSuccess(Vec<u8>),
+    ResponseEvent(CQLList),
 
     ResultVoid,
     ResultRows(CqlRows),
