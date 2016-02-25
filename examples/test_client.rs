@@ -2,6 +2,7 @@ extern crate cql;
 extern crate eventual;
 extern crate mio;
 
+use cql::*;
 use std::borrow::Cow;
 use std::io::Write;
 use std::thread;
@@ -45,8 +46,9 @@ fn test_client() {
     let mut client = try_test!(cql::connect(ip_port.parse().ok().expect("Couldn't parse address"),None), "Error connecting to server at "+ip_port);
     println!("Connected with CQL binary version v{}", client.version);
 
-    let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
-                                            cql::CqlVarchar(Some((Cow::Borrowed("STATUS_CHANGE")))) ];
+    // let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
+    //                                        cql::CqlVarchar(Some((Cow::Borrowed("STATUS_CHANGE")))) ];
+    let params = vec![ CqlVarchar(Some(CqlEventType::EventStatusChange.get_str()))];
 
     let future = client.send_register(params);
     let response = try_test!(future.await().unwrap(),"Error sending register to events");
