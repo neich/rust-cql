@@ -153,6 +153,24 @@ pub fn cql_column_type(val: u16) -> CqlValueType {
     }
 }
 
+#[derive(Debug)]
+pub enum CqlEventType {
+    EventTopologyChange,
+    EventStatusChange,
+    EventSchemaChange,
+    EventUnknow
+}
+
+impl CqlEventType{
+    pub fn get_str(&self) -> CowStr {
+        match *self {
+            CqlEventType::EventTopologyChange => Cow::Borrowed("TOPOLOGY_CHANGE"),
+            CqlEventType::EventStatusChange => Cow::Borrowed("STATUS_CHANGE"),
+            CqlEventType::EventSchemaChange => Cow::Borrowed("SCHEMA_CHANGE"),
+            _ => Cow::Borrowed("UNKNOWN_EVENT")
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum RCErrorType {

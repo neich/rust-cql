@@ -11,6 +11,7 @@ pub use def::BatchType;
 pub use def::CqlValue;
 pub use def::CqlValue::CqlFloat;
 pub use def::CqlValue::CqlVarchar;
+pub use def::CqlEventType;
 pub use def::CQLList;
 pub use def::CQLMap;
 pub use def::CQLSet;

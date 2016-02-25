@@ -31,7 +31,7 @@ pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
 pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
 pub struct Client {
-    pool: Pool, //Set of channels
+    channel_pool: ChannelPool, //Set of channels
     pub version: u8
 }
 
@@ -39,7 +39,7 @@ impl Client{
     
     fn new(version:u8) -> Client {
         Client{
-            pool: Pool::new(),
+            channel_pool: ChannelPool::new(),
             version: version
         }
     }
@@ -179,7 +179,7 @@ impl Client{
 
     fn send_message(&mut self,request: CqlRequest) -> CassFuture{
         let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
-        match self.pool.find_available_channel(){
+        match self.channel_pool.find_available_channel(){
             Ok(channel) => {
                 channel.send(CqlMsg::Request{
                                 request: request,
@@ -209,7 +209,7 @@ impl Client{
         // It will be changed depending how it is decided to handle multiple connections and event loops
         let token = Token(1);
         println!("Adding connection");
-        self.pool.add_channel(event_loop.channel());
+        self.channel_pool.add_channel(event_loop.channel());
         println!("It seems we could add a connection ");
         event_loop.register(
                 &socket,
@@ -274,13 +274,13 @@ pub enum CqlMsg{
 // the CqlRequests. This will be changed when we decide how 
 // to manage our event loops (connections) but for now it is
 // only use one event loop and so one channel
-pub struct Pool {
+pub struct ChannelPool {
     channels: Vec<Sender<CqlMsg>>
 }
 
-impl Pool {
-    fn new() -> Pool {
-        Pool {
+impl ChannelPool {
+    fn new() -> ChannelPool {
+        ChannelPool {
             channels: Vec::new()
         }
     }
@@ -451,12 +451,6 @@ impl Connection {
         event_loop.reregister(&self.socket, self.token, events, mio::PollOpt::oneshot())
             .unwrap();
     }
-
-    //#[inline]
-    //fn set_state(&mut self,event_loop: &mut mio::EventLoop<Connection>,state: State){
-    //    self.state = state;
-    //    self.reregister(event_loop);
-    //}
     
 }
 
