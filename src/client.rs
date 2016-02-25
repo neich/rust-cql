@@ -3,7 +3,7 @@ extern crate bytes;
 extern crate eventual;
 
 use self::eventual::{Future, Async, Complete};
-use self::mio::{Token, EventLoop, Sender, TryRead, TryWrite};
+use self::mio::{Token, EventLoop, Sender, TryRead, TryWrite, EventSet};
 use self::mio::tcp::TcpStream;
 use self::mio::util::Slab;
 use self::bytes::{ByteBuf, MutByteBuf};
@@ -205,33 +205,33 @@ impl Client{
 
     fn run_event_loop_with_connection(&mut self ,socket: TcpStream){
         let mut event_loop : EventLoop<Connection> = 
-            mio::EventLoop::new().ok().expect("Couldn't create event loop");
+                mio::EventLoop::new().ok().expect("Couldn't create event loop");
         // It will be changed depending how it is decided to handle multiple connections and event loops
         let token = Token(1);
         println!("Adding connection");
         self.pool.add_channel(event_loop.channel());
         println!("It seems we could add a connection ");
         event_loop.register(
-            &socket,
-            token,
-            mio::EventSet::writable(),
-            mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
+                &socket,
+                token,
+                mio::EventSet::writable(),
+                mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
         // We will need the event loop to register a new socket
         // but on creating the thread we borrow the even_loop.
         // So we 'give away' the connection and keep the channel.
         let mut connection =  Connection {
-            socket: socket,
-            token: token,
-            state: State::Waiting,
-            pendings: Vec::new(),
-            version: self.version
-        };
+                socket: socket,
+                token: token,
+                response: Response::new(),
+                pendings: Vec::new(),
+                version: self.version
+            };
 
         println!("Even loop starting...");
         // Only keep event loop channel
         thread::spawn(move||{
-            event_loop.run(&mut connection).ok().expect("Failed to start event loop");
-        });
+                event_loop.run(&mut connection).ok().expect("Failed to start event loop");
+            });
     }
 }
 
@@ -244,21 +244,19 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Clien
 
         while version >= 0x01 {
             let res = TcpStream::connect(&address);
-
             if res.is_err() {
                 return Err(RCError::new(format!("Failed to connect to server at {}", address), ConnectionError));
             }
             let mut socket = res.unwrap();
-            println!("Ip of the own socket is {}",socket.local_addr().unwrap());
             let mut client = Client::new(version);
             // Shutdown is not needed here because
             // a client is created each loop
             client.run_event_loop_with_connection(socket);
-            println!("{}",version);
             match client.send_startup(creds.clone()) {
                 Ok(_) => return Ok(client),
                 Err(e) => println!("Error connecting with protocol version v{}: {}", version, e.desc)
             }
+
             version -= 1;
         }
         Err(RCError::new("Unable to find suitable protocol version (v1, v2, v3)", ReadError))
@@ -303,8 +301,8 @@ struct Connection {
     socket: TcpStream,
     // The token used to register this connection with the EventLoop
     token: mio::Token,
-    // The current state of the connection (reading, writing or waiting)
-    state: State,
+    // The response from reading a socket
+    response: Response,
     // Pending messages to be send (CQL requests)
     pendings: Vec<CqlMsg>,
     // CQL version v1, v2 or v3
@@ -323,20 +321,12 @@ impl mio::Handler for Connection {
         println!("[Connection::notify]");
         match msg {
             CqlMsg::Request{..} => {
-                match self.state {
-                    State::Waiting(..) => {
-                        self.set_state(event_loop,State::Writing);
-                        // Ineficient, consider using a LinkedList
-                        self.pendings.insert(0,msg); 
-                    }
-                    _ => {
-                        self.pendings.insert(0,msg);
-                    }
-                }
+                // Ineficient, consider using a LinkedList
+                self.pendings.insert(0,msg);
+                self.reregister(event_loop,EventSet::writable());
             },
             CqlMsg::Shutdown => {
-                //Maybe don't reregister in this set state?
-                self.set_state(event_loop,State::Closed);
+                event_loop.shutdown();
             },
         }
 
@@ -346,14 +336,20 @@ impl mio::Handler for Connection {
     fn ready(&mut self, event_loop: &mut mio::EventLoop<Connection>, token: mio::Token, events: mio::EventSet) {
         println!("[Connection::ready]");      
         println!("Assigned token is: {:?}",self.token);
+        println!("Events: {:?}",events);                
+        if events.is_readable() {
+            println!("    connection-state=Reading");
+            self.read(event_loop);
 
-        match self.state {
-            State::Reading(..) => {
-                println!("    connection-state=Reading");
-                assert!(events.is_readable(), "unexpected events; events={:?}", events);
-                self.read(event_loop);
-
-                let mut response = self.state.read_cql_response(self.version);
+            let pair = self.response.read_cql_response(self.version);
+            let response = pair.0;
+            let is_event = pair.1;
+            println!("Response from event_loop: {:?}",response);
+            if is_event {
+                println!("It seems we've got an Event message!");
+                // Do proper stuff with the Event message here
+            }
+            else {
                 // Completes the future with a CqlResponse
                 // which is a RCResult<CqlResponse>
                 // so we can handle errors properly
@@ -361,7 +357,7 @@ impl mio::Handler for Connection {
                           .pop()
                           .take()
                           .unwrap() 
-                    {
+                {
                     CqlMsg::Request{request,tx} => {
                        tx.complete(response);
                     },
@@ -370,20 +366,16 @@ impl mio::Handler for Connection {
                     },
                 }
             }
-            State::Writing(..) => {
-                println!("    connection-state=Writing");
-                assert!(events.is_writable(), "unexpected events; events={:?}", events);
-                self.write(event_loop,token)
-            }
-            State::Closed(..) => {
-                println!("    connection-state=Closed");
-                event_loop.shutdown();
-            }
-            _ => (),
+            
+        }
+
+        if events.is_writable() && self.pendings.len() > 0{
+            println!("    connection-state=Writing");
+            self.write(event_loop,token)
         }
 
         if self.pendings.len() == 0 {
-            self.state.transition_to_waiting();
+            // Maybe do something here
         }
         println!("[Connection::Ended ready]");
     }
@@ -392,22 +384,21 @@ impl mio::Handler for Connection {
 impl Connection {
 
     fn read(&mut self, event_loop: &mut mio::EventLoop<Connection>) {
-        match self.socket.try_read_buf(self.state.mut_read_buf()) {
+        match self.socket.try_read_buf(self.response.mut_read_buf()) {
             Ok(Some(0)) => {
-                 println!("    connection-state=Closed");
-                self.state = State::Closed;
+                println!("read 0 bytes");
             }
             Ok(Some(n)) => {
                 println!("read {} bytes", n);
-
+                // self.read(event_loop);  // Recursion here, care
                 // Re-register the socket with the event loop. The current
                 // state is used to determine whether we are currently reading
                 // or writing.
-                self.reregister(event_loop);
+                self.reregister(event_loop,EventSet::writable());
             }
             Ok(None) => {
                 println!("Reading buf = None");
-                self.reregister(event_loop);
+                self.reregister(event_loop,EventSet::readable());
             }
             Err(e) => {
                 panic!("got an error trying to read; err={:?}", e);
@@ -417,6 +408,7 @@ impl Connection {
 
     fn write(&mut self, event_loop: &mut mio::EventLoop<Connection>,token: Token) {
         let mut buf = ByteBuf::mut_with_capacity(2048);
+        println!("self.pendings.len = {:?}",self.pendings.len());
         match self.pendings
                   .pop()
                   .unwrap()
@@ -433,18 +425,15 @@ impl Connection {
             {
             Ok(Some(n)) => {
                 println!("Written {} bytes",n);
-                // If the entire buffer has been written, transition to the
-                // reading state.
-                self.state.try_transition_to_reading();
 
                 // Re-register the socket with the event loop.
-                self.reregister(event_loop);
+                self.reregister(event_loop,EventSet::readable());
 
             }
             Ok(None) => {
                 // The socket wasn't actually ready, re-register the socket
                 // with the event loop
-                self.reregister(event_loop);
+                self.reregister(event_loop,EventSet::writable());
             }
             Err(e) => {
                 panic!("got an error trying to read; err={:?}", e);
@@ -454,87 +443,52 @@ impl Connection {
         println!("Ended write"); 
     }
 
-    fn reregister(&self, event_loop: &mut mio::EventLoop<Connection>) {
+    fn reregister(&self, event_loop: &mut EventLoop<Connection>,events : EventSet) {
         // Maps the current client state to the mio `EventSet` that will provide us
         // with the notifications that we want. When we are currently reading from
         // the client, we want `readable` socket notifications. When we are writing
         // to the client, we want `writable` notifications.
-        let event_set = match self.state {
-            State::Reading(..) => mio::EventSet::readable(),
-            State::Writing(..) => mio::EventSet::writable(),
-            _ => return,
-        };
-        event_loop.reregister(&self.socket, self.token, event_set, mio::PollOpt::oneshot())
+        event_loop.reregister(&self.socket, self.token, events, mio::PollOpt::oneshot())
             .unwrap();
     }
 
-    #[inline]
-    fn set_state(&mut self,event_loop: &mut mio::EventLoop<Connection>,state: State){
-        self.state = state;
-        self.reregister(event_loop);
-    }
+    //#[inline]
+    //fn set_state(&mut self,event_loop: &mut mio::EventLoop<Connection>,state: State){
+    //    self.state = state;
+    //    self.reregister(event_loop);
+    //}
     
-    #[inline]
-    fn is_closed(&self) -> bool {
-        match self.state {
-            State::Closed => true,
-            _ => false,
+}
+
+struct Response {
+    data : MutByteBuf
+}
+
+impl Response {
+
+    fn new() -> Response {
+        Response {
+            data: ByteBuf::mut_with_capacity(2048)
         }
     }
-}
 
-enum State {
-    Reading(MutByteBuf),
-    Writing,
-    Waiting,
-    Closed
-}
-
-impl State {
-    
-    fn try_transition_to_reading(&mut self) {
-        self.transition_to_reading();
-    }
-    
-
-    fn transition_to_reading(&mut self) {
-        *self = State::Reading(ByteBuf::mut_with_capacity(2048));
-    }
-
-    fn transition_to_waiting(&mut self){
-        *self = State::Waiting;
-    }
 
     fn read_buf(&self) -> &MutByteBuf {
-        match *self {
-            State::Reading(ref buf) => buf,
-            _ => panic!("connection not in reading state"),
-        }
+        &self.data
     }
 
     fn mut_read_buf(&mut self) -> &mut MutByteBuf{
-        match *self {
-            State::Reading(ref mut buf) => buf,
-            _ => panic!("connection not in reading state"),
-        }
+        &mut self.data
     }
 
     fn unwrap_read_buf(self) -> MutByteBuf {
-        match self {
-            State::Reading(buf) => buf,
-            _ => panic!("connection not in reading state"),
-        }
+        self.data
     }
 
-    fn read_cql_response(&self,version: u8) -> RCResult<CqlResponse>{
-        match *self {
-            State::Reading(ref buf) => {
-                let bytes_buf = self.read_buf().bytes();   
-                //By now, just copy it to avoid borrowing troubles
-                let mut response : ByteBuf = ByteBuf::from_slice(bytes_buf);
-                response.read_cql_response(version)
-            },
-            _ => panic!("connection not in reading state"),
-        }
+    fn read_cql_response(&self,version: u8) -> (RCResult<CqlResponse>,bool){
+            let bytes_buf = self.read_buf().bytes();   
+            // By now, just copy it to avoid borrowing troubles
+            let mut response : ByteBuf = ByteBuf::from_slice(bytes_buf);
+            (response.read_cql_response(version),response.cql_response_is_event(version).unwrap())
     }
 }

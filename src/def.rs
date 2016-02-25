@@ -72,6 +72,15 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
     }
 }
 
+// Stream id is -1 for Event messages
+impl OpcodeResponse {
+    pub fn isEventCode(&self) -> bool{
+        match self{
+            &OpcodeResponse::OpcodeEvent => true,
+            _ => false,
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum Consistency {
@@ -316,6 +325,8 @@ pub struct CqlResponse {
     pub opcode: OpcodeResponse,
     pub body: CqlResponseBody,
 }
+
+
 
 #[derive(Debug)]
 pub enum CqlResponseBody {
