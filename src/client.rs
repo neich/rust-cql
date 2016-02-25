@@ -204,7 +204,7 @@ impl Client{
     }
 
     fn run_event_loop_with_connection(&mut self ,socket: TcpStream){
-        let mut event_loop : EventLoop<Connection> = 
+        let mut event_loop : EventLoop<ConnectionPool> = 
                 mio::EventLoop::new().ok().expect("Couldn't create event loop");
         // It will be changed depending how it is decided to handle multiple connections and event loops
         let token = Token(1);
@@ -218,19 +218,22 @@ impl Client{
                 mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
         // We will need the event loop to register a new socket
         // but on creating the thread we borrow the even_loop.
-        // So we 'give away' the connection and keep the channel.
-        let mut connection =  Connection {
+        // So we 'give away' the connection pool and keep the channel.
+        let mut connection_pool = ConnectionPool::new();
+        let mut conn =  Connection {
                 socket: socket,
                 token: token,
-                response: Response::new(),
+                response: CassResponse::new(),
                 pendings: Vec::new(),
                 version: self.version
-            };
+            };  
+
+        connection_pool.add_connection(conn);
 
         println!("Even loop starting...");
         // Only keep event loop channel
         thread::spawn(move||{
-                event_loop.run(&mut connection).ok().expect("Failed to start event loop");
+                event_loop.run(&mut connection_pool).ok().expect("Failed to start event loop");
             });
     }
 }
@@ -296,20 +299,44 @@ impl ChannelPool {
     }
 }
 
+
 struct Connection {
     // The connection's TCP socket 
     socket: TcpStream,
     // The token used to register this connection with the EventLoop
     token: mio::Token,
     // The response from reading a socket
-    response: Response,
+    response: CassResponse,
     // Pending messages to be send (CQL requests)
     pendings: Vec<CqlMsg>,
     // CQL version v1, v2 or v3
     version: u8
 }
 
-impl mio::Handler for Connection {
+pub struct ConnectionPool {
+    connections: Slab<Connection>
+}
+
+impl ConnectionPool {
+    fn new() -> ConnectionPool {
+        ConnectionPool {
+            connections: Slab::new_starting_at(Token(1), 128)
+        }
+    }
+    fn add_connection(&mut self, connection: Connection){
+        self.connections.insert_with(|token| {
+            connection});
+    }
+    // For now only use one connection
+    fn find_connection(&mut self,token: Token) -> Result<&mut Connection,&'static str>{
+        if !self.connections.is_empty() {
+            return Ok(self.connections.get_mut(token).unwrap());
+        }
+        Err("There is no connection created")
+    }
+}
+
+impl mio::Handler for ConnectionPool {
     type Timeout = ();
     // Left one is the internal Handler message type and
     // right one is our defined type
@@ -317,13 +344,15 @@ impl mio::Handler for Connection {
 
     // Push pending messages to be send across the event 
     // loop. Only change state in case it is waiting
-    fn notify(&mut self, event_loop: &mut EventLoop<Connection>, msg: CqlMsg) {
-        println!("[Connection::notify]");
+    fn notify(&mut self, event_loop: &mut EventLoop<ConnectionPool>, msg: CqlMsg) {
+        println!("[ConnectionPool::notify]");
         match msg {
             CqlMsg::Request{..} => {
+                // How do we know which connection use here?...
+                let mut connection = self.find_connection(Token(1)).unwrap();  
                 // Ineficient, consider using a LinkedList
-                self.pendings.insert(0,msg);
-                self.reregister(event_loop,EventSet::writable());
+                connection.pendings.insert(0,msg);
+                connection.reregister(event_loop,EventSet::writable());
             },
             CqlMsg::Shutdown => {
                 event_loop.shutdown();
@@ -333,15 +362,16 @@ impl mio::Handler for Connection {
     }
 
     
-    fn ready(&mut self, event_loop: &mut mio::EventLoop<Connection>, token: mio::Token, events: mio::EventSet) {
+    fn ready(&mut self, event_loop: &mut mio::EventLoop<ConnectionPool>, token: Token, events: mio::EventSet) {
         println!("[Connection::ready]");      
-        println!("Assigned token is: {:?}",self.token);
-        println!("Events: {:?}",events);                
+        println!("Assigned token is: {:?}",token);
+        println!("Events: {:?}",events);
+        let mut connection = self.find_connection(token).unwrap();                
         if events.is_readable() {
-            println!("    connection-state=Reading");
-            self.read(event_loop);
+            println!("    connection-EventSet::Readable");
+            connection.read(event_loop);
 
-            let pair = self.response.read_cql_response(self.version);
+            let pair = connection.response.read_cql_response(connection.version);
             let response = pair.0;
             let is_event = pair.1;
             println!("Response from event_loop: {:?}",response);
@@ -353,7 +383,7 @@ impl mio::Handler for Connection {
                 // Completes the future with a CqlResponse
                 // which is a RCResult<CqlResponse>
                 // so we can handle errors properly
-                match self.pendings
+                match connection.pendings
                           .pop()
                           .take()
                           .unwrap() 
@@ -369,12 +399,12 @@ impl mio::Handler for Connection {
             
         }
 
-        if events.is_writable() && self.pendings.len() > 0{
-            println!("    connection-state=Writing");
-            self.write(event_loop,token)
+        if events.is_writable() && connection.pendings.len() > 0{
+            println!("    connection-EventSet::Writable");
+            connection.write(event_loop)
         }
 
-        if self.pendings.len() == 0 {
+        if connection.pendings.len() == 0 {
             // Maybe do something here
         }
         println!("[Connection::Ended ready]");
@@ -383,7 +413,7 @@ impl mio::Handler for Connection {
 
 impl Connection {
 
-    fn read(&mut self, event_loop: &mut mio::EventLoop<Connection>) {
+    fn read(&mut self, event_loop: &mut mio::EventLoop<ConnectionPool>) {
         match self.socket.try_read_buf(self.response.mut_read_buf()) {
             Ok(Some(0)) => {
                 println!("read 0 bytes");
@@ -406,7 +436,7 @@ impl Connection {
         }
     }
 
-    fn write(&mut self, event_loop: &mut mio::EventLoop<Connection>,token: Token) {
+    fn write(&mut self, event_loop: &mut mio::EventLoop<ConnectionPool>) {
         let mut buf = ByteBuf::mut_with_capacity(2048);
         println!("self.pendings.len = {:?}",self.pendings.len());
         match self.pendings
@@ -443,7 +473,7 @@ impl Connection {
         println!("Ended write"); 
     }
 
-    fn reregister(&self, event_loop: &mut EventLoop<Connection>,events : EventSet) {
+    fn reregister(&self, event_loop: &mut EventLoop<ConnectionPool>,events : EventSet) {
         // Maps the current client state to the mio `EventSet` that will provide us
         // with the notifications that we want. When we are currently reading from
         // the client, we want `readable` socket notifications. When we are writing
@@ -454,14 +484,14 @@ impl Connection {
     
 }
 
-struct Response {
+struct CassResponse {
     data : MutByteBuf
 }
 
-impl Response {
+impl CassResponse {
 
-    fn new() -> Response {
-        Response {
+    fn new() -> CassResponse {
+        CassResponse {
             data: ByteBuf::mut_with_capacity(2048)
         }
     }
