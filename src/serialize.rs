@@ -151,11 +151,7 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
             },
             RequestRegister(ref params) => {
                 let len = params.len();              
-                if version >= 3 {
-                    try_bo!(buf.write_i32::<BigEndian>(len as i32), "Error serializing Register (params length)")
-                } else {
-                    try_bo!(buf.write_i16::<BigEndian>(len as i16), "Error serializing Register (params length)")
-                }
+                try_bo!(buf.write_u16::<BigEndian>(len as u16), "Error serializing Register (params length)");
                 for v in params.iter() {
                     v.serialize_size(buf, Cqli16, version);
                 }
