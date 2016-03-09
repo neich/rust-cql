@@ -48,7 +48,9 @@ fn test_client() {
 
     // let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
     //                                        cql::CqlVarchar(Some((Cow::Borrowed("STATUS_CHANGE")))) ];
-    let params = vec![ CqlVarchar(Some(CqlEventType::EventStatusChange.get_str()))];
+    let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str()   )),
+                       CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
+                     ];
 
     let future = client.send_register(params);
     let response = try_test!(future.await().unwrap(),"Error sending register to events");

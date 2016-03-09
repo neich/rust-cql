@@ -9,12 +9,13 @@ use self::mio::util::Slab;
 use self::bytes::{ByteBuf, MutByteBuf};
 use std::{mem, str};
 use std::io::Cursor;
-use std::net::SocketAddr;
+use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::collections::BTreeMap;
 use std::borrow::Cow;
 use std::error::Error;
 use std::thread;
 use std::sync::mpsc::channel;
+
 
 use super::def::*;
 use super::def::OpcodeRequest::*;
@@ -26,21 +27,23 @@ use super::reader::*;
 
 
 pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
-pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
+pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x02;
 
 pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
 pub struct Client {
     channel_pool: ChannelPool, //Set of channels
-    pub version: u8
+    pub version: u8,
+    address: SocketAddr
 }
 
 impl Client{
     
-    fn new(version:u8) -> Client {
+    fn new(address: SocketAddr,version:u8) -> Client {
         Client{
             channel_pool: ChannelPool::new(),
-            version: version
+            version: version,
+            address: address
         }
     }
     
@@ -183,7 +186,8 @@ impl Client{
             Ok(channel) => {
                 channel.send(CqlMsg::Request{
                                 request: request,
-                                tx: tx});
+                                tx: tx,
+                                address: self.address});
             },
             Err(e) => {
                 tx.complete(Err(RCError::new("Sending error", IOError)));
@@ -208,6 +212,9 @@ impl Client{
                 mio::EventLoop::new().ok().expect("Couldn't create event loop");
         // It will be changed depending how it is decided to handle multiple connections and event loops
         let token = Token(1);
+        let socket2 = socket.try_clone().unwrap();
+        let ip1 = socket.peer_addr().unwrap().ip();
+        let ip2 = socket2.peer_addr().unwrap().ip();
         println!("Adding connection");
         self.channel_pool.add_channel(event_loop.channel());
         println!("It seems we could add a connection ");
@@ -222,14 +229,23 @@ impl Client{
         let mut connection_pool = ConnectionPool::new();
         let mut conn =  Connection {
                 socket: socket,
-                token: token,
+                token:Token(1),
                 response: CassResponse::new(),
                 pendings: Vec::new(),
                 version: self.version
             };  
 
-        connection_pool.add_connection(conn);
+        // Connection only for recieve event messages
+        let mut conn2 =  Connection {
+                socket: socket2,
+                token:Token(2),
+                response: CassResponse::new(),
+                pendings: Vec::new(),
+                version: self.version
+            };  
 
+        connection_pool.add_connection(ip1,conn);
+        connection_pool.add_connection(ip2,conn2);
         println!("Even loop starting...");
         // Only keep event loop channel
         thread::spawn(move||{
@@ -251,7 +267,7 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Clien
                 return Err(RCError::new(format!("Failed to connect to server at {}", address), ConnectionError));
             }
             let mut socket = res.unwrap();
-            let mut client = Client::new(version);
+            let mut client = Client::new(address,version);
             // Shutdown is not needed here because
             // a client is created each loop
             client.run_event_loop_with_connection(socket);
@@ -268,9 +284,24 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>) -> RCResult<Clien
 pub enum CqlMsg{
     Request{
         request: CqlRequest,
-        tx: Complete<RCResult<CqlResponse>,()>
+        tx: Complete<RCResult<CqlResponse>,()>,
+        address: SocketAddr
     },
     Shutdown
+}
+
+impl CqlMsg{
+    pub fn get_ip(&self) -> IpAddr
+    {
+        match self{
+            &CqlMsg::Request{ref request,ref tx,ref address} => {
+                address.ip().clone()
+            }
+            &CqlMsg::Shutdown =>{
+                panic!("Shutdown doesn't have IP");
+            }
+        }
+    }
 }
 
 // The idea is to have a set of event loop channels to send 
@@ -313,28 +344,70 @@ struct Connection {
     version: u8
 }
 
+
 pub struct ConnectionPool {
+    token_by_ip: BTreeMap<IpAddr,Token>,
     connections: Slab<Connection>
 }
 
 impl ConnectionPool {
     fn new() -> ConnectionPool {
         ConnectionPool {
+            token_by_ip: BTreeMap::new(),
             connections: Slab::new_starting_at(Token(1), 128)
         }
     }
-    fn add_connection(&mut self, connection: Connection){
-        self.connections.insert_with(|token| {
-            connection});
+    /*
+    fn get_connection_with_ip(&mut self,address:&IpAddr) -> Result<&mut Connection,&'static str>{
+        if !self.exists_connection_by_ip(address){
+            let conn = Connection::new(3);
+            self.add_connection(address,conn);
+            // Here is where it should be the connect and send_startup
+            return Ok(&conn)
+        }
+        find_connection_by_ip(address)
     }
-    // For now only use one connection
-    fn find_connection(&mut self,token: Token) -> Result<&mut Connection,&'static str>{
+    */
+
+    fn add_connection(&mut self, address:IpAddr,connection: Connection){
+        let result = self.connections.insert(connection);
+        match result{
+            Ok(r) => {
+               self.token_by_ip.insert(address,r);
+            },
+            Err(err) => {
+                println!("Couldn't insert a new connection")
+            }
+        }
+    }
+    
+
+    fn exists_connection_by_ip(&mut self,address:&IpAddr) -> bool{
+        self.token_by_ip.contains_key(address)
+    }
+
+    fn exists_connection_by_token(&mut self,token: Token) -> bool{
+        self.connections.contains(token)
+    }
+
+    fn find_connection_by_ip(&mut self,address:&IpAddr) -> Result<&mut Connection,&'static str>{
+        if !self.connections.is_empty() {
+            // Needs to be improved
+            return Ok(self.connections.get_mut(self.token_by_ip
+                                                   .get(address).unwrap().clone()
+                                              ).unwrap());
+        }
+        Err("There is no connection found")
+    }
+
+    fn find_connection_by_token(&mut self,token: Token) -> Result<&mut Connection,&'static str>{
         if !self.connections.is_empty() {
             return Ok(self.connections.get_mut(token).unwrap());
         }
-        Err("There is no connection created")
+        Err("There is no connection found")
     }
 }
+
 
 impl mio::Handler for ConnectionPool {
     type Timeout = ();
@@ -348,25 +421,31 @@ impl mio::Handler for ConnectionPool {
         println!("[ConnectionPool::notify]");
         match msg {
             CqlMsg::Request{..} => {
-                // How do we know which connection use here?...
-                let mut connection = self.find_connection(Token(1)).unwrap();  
-                // Ineficient, consider using a LinkedList
-                connection.pendings.insert(0,msg);
-                connection.reregister(event_loop,EventSet::writable());
+                let mut result = self.find_connection_by_ip(&msg.get_ip());  
+                
+                match result {
+                    Ok(conn) =>{
+                        // Ineficient, consider using a LinkedList
+                        conn.pendings.insert(0,msg);
+                        conn.reregister(event_loop,EventSet::writable());
+                    },
+                    Err(err) =>{
+
+                    }
+                }
             },
             CqlMsg::Shutdown => {
                 event_loop.shutdown();
             },
         }
-
     }
 
     
-    fn ready(&mut self, event_loop: &mut mio::EventLoop<ConnectionPool>, token: Token, events: mio::EventSet) {
+    fn ready(&mut self, event_loop: &mut EventLoop<ConnectionPool>, token: Token, events: EventSet) {
         println!("[Connection::ready]");      
         println!("Assigned token is: {:?}",token);
         println!("Events: {:?}",events);
-        let mut connection = self.find_connection(token).unwrap();                
+        let mut connection = self.find_connection_by_token(token).unwrap();      //This is just so it compiles for now          
         if events.is_readable() {
             println!("    connection-EventSet::Readable");
             connection.read(event_loop);
@@ -388,7 +467,7 @@ impl mio::Handler for ConnectionPool {
                           .take()
                           .unwrap() 
                 {
-                    CqlMsg::Request{request,tx} => {
+                    CqlMsg::Request{request,tx,address} => {
                        tx.complete(response);
                     },
                     CqlMsg::Shutdown => {
@@ -413,7 +492,18 @@ impl mio::Handler for ConnectionPool {
 
 impl Connection {
 
-    fn read(&mut self, event_loop: &mut mio::EventLoop<ConnectionPool>) {
+        
+    fn new(socket:TcpStream,token: Token,version: u8)-> Connection{
+        Connection {
+            socket: socket,
+            token: token,
+            response: CassResponse::new(),
+            pendings: Vec::new(),
+            version: version
+        }
+    }
+
+    fn read(&mut self, event_loop: &mut EventLoop<ConnectionPool>) {
         match self.socket.try_read_buf(self.response.mut_read_buf()) {
             Ok(Some(0)) => {
                 println!("read 0 bytes");
@@ -436,16 +526,16 @@ impl Connection {
         }
     }
 
-    fn write(&mut self, event_loop: &mut mio::EventLoop<ConnectionPool>) {
+    fn write(&mut self, event_loop: &mut EventLoop<ConnectionPool>) {
         let mut buf = ByteBuf::mut_with_capacity(2048);
         println!("self.pendings.len = {:?}",self.pendings.len());
         match self.pendings
                   .pop()
                   .unwrap()
              {
-             CqlMsg::Request{request,tx} => {
+             CqlMsg::Request{request,tx,address} => {
                 request.serialize(&mut buf,self.version);
-                self.pendings.push(CqlMsg::Request{request:request,tx:tx});
+                self.pendings.push(CqlMsg::Request{request:request,tx:tx,address:address});
              },
              CqlMsg::Shutdown => {
                 panic!("Shutdown messages shouldn't be at pendings");
