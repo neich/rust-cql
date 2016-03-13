@@ -4,7 +4,7 @@
 
 #[macro_use] extern crate enum_primitive as ep;
 
-pub use client::connect;
+pub use client::create_client;
 pub use client::CassFuture;
 pub use def::Consistency;
 pub use def::BatchType;
