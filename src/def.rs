@@ -1,6 +1,7 @@
 extern crate std;
 extern crate num;
 extern crate uuid;
+extern crate eventual;
 
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
@@ -8,6 +9,7 @@ use self::uuid::Uuid;
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::error::Error;
+use self::eventual::Future;
 
 pub type CowStr = Cow<'static, str>;
 
@@ -381,4 +383,8 @@ pub enum Query {
 
 
 
+pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
+
+pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
+pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;

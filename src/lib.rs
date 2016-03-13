@@ -5,7 +5,7 @@
 #[macro_use] extern crate enum_primitive as ep;
 
 pub use client::create_client;
-pub use client::CassFuture;
+pub use def::CassFuture;
 pub use def::Consistency;
 pub use def::BatchType;
 pub use def::CqlValue;
@@ -92,4 +92,6 @@ macro_rules! CowStr_tuple_void(
 mod def;
 mod reader;
 mod serialize;
+mod connection;
+mod connection_pool;
 pub mod client;
