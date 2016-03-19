@@ -4,7 +4,8 @@
 
 #[macro_use] extern crate enum_primitive as ep;
 
-pub use client::create_client;
+//pub use client::create_client;
+pub use cluster::Cluster;
 pub use def::CassFuture;
 pub use def::Consistency;
 pub use def::BatchType;
@@ -94,4 +95,5 @@ mod reader;
 mod serialize;
 mod connection;
 mod connection_pool;
-pub mod client;
+mod node;
+pub mod cluster;

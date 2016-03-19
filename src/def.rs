@@ -1,6 +1,7 @@
 extern crate std;
 extern crate num;
 extern crate uuid;
+extern crate mio;
 extern crate eventual;
 
 use std::net::Ipv4Addr;

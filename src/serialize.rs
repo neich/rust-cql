@@ -7,13 +7,12 @@ use std::borrow::Cow;
 use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian, Error};
 use std::mem;
 
-use super::def::*;
-use super::def::CqlBytesSize::*;
-use super::def::CqlRequestBody::*;
-use super::def::RCErrorType::*;
-use super::def::Query::*;
-use super::def::CqlValue::*;
-use super::client::Client;
+use def::*;
+use def::CqlBytesSize::*;
+use def::CqlRequestBody::*;
+use def::RCErrorType::*;
+use def::Query::*;
+use def::CqlValue::*;
 
 pub trait CqlSerializable<'a> {
     fn len(&'a self, version: u8) -> usize;

@@ -35,7 +35,7 @@ impl ConnectionPool {
     fn get_connection_with_ip(&mut self,event_loop: &mut EventLoop<ConnectionPool>,address:&IpAddr) -> Result<&mut Connection,&'static str>{
         println!("[ConnectionPool::get_connection_with_ip]");
         if !self.exists_connection_by_ip(address){
-            println!("Connection doesn't exist, let's created!");
+            println!("Connection doesn't exist, let's create it!");
             let mut conn = connect(SocketAddr::new(address.clone(),9042),None,event_loop).ok().expect("Couldn't unwrap the connection");
 
             let token = self.add_connection(address.clone(),conn).ok().expect("Couldn't unwrap the token");
@@ -115,7 +115,6 @@ impl mio::Handler for ConnectionPool {
                 // Here is where we should do create a new connection if it doesn't exists.
                 // We do the connect, and then we can do the send_startup with the queue_message
                 // and wait for the response
-                println!("Line 319");
                 match result {
                     Ok(conn) =>{
                         // Ineficient, consider using a LinkedList

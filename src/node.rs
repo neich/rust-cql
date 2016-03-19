@@ -14,28 +14,29 @@ use def::OpcodeRequest::*;
 use def::CqlRequestBody::*;
 use def::RCErrorType::*;
 use def::CqlResponseBody::*;
+use def::CqlValue::*;
 use connection::CqlMsg;
 use connection_pool::ConnectionPool;
 
-pub struct Client {
-    channel_pool: ChannelPool, //Set of channels
+pub struct Node<'a> {
+    channel_pool: &'a ChannelPool, //Set of channels
     pub version: u8,
     address: SocketAddr
 }
 
-impl Client{
+impl<'a> Node<'a>{
     
-    pub fn new(address: SocketAddr) -> Client {
-        Client{
-            channel_pool: ChannelPool::new(),
+    pub fn new(address: SocketAddr,channel_pool:&'a ChannelPool) -> Node {
+        Node{
+            channel_pool: channel_pool,
             version: CQL_MAX_SUPPORTED_VERSION,
             address: address
         }
     }
     
-    pub fn start(&mut self){
-        self.run_event_loop();
-    }
+    //pub fn start(&mut self){
+    //    self.run_event_loop();
+    //}
 
     pub fn exec_query(&mut self, query_str: &str, con: Consistency) -> CassFuture {
         let q = CqlRequest {
@@ -75,7 +76,7 @@ impl Client{
             Ok(file) => file,
         };
 
-        serialize_and_check_io_error!(serialize_with_client, &mut file, q, self, "Error serializing to file");
+        serialize_and_check_io_error!(serialize_with_Node, &mut file, q, self, "Error serializing to file");
         */
         self.send_message(q)
     }
@@ -119,7 +120,7 @@ impl Client{
     }
 
     pub fn send_register(&mut self,params: Vec<CqlValue>) -> CassFuture{
-        println!("Client::send_register");
+        println!("Node::send_register");
         let msg_register = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -130,29 +131,16 @@ impl Client{
         self.send_message(msg_register)
     }
 
-    fn run_event_loop(&mut self){
+    pub fn connect(&mut self) -> CassFuture{
+        let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str()   )),
+                        CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
+                 ];
 
-        let mut event_loop : EventLoop<ConnectionPool> = 
-                mio::EventLoop::new().ok().expect("Couldn't create event loop");
-        
-        self.channel_pool.add_channel(event_loop.channel());
-        // We will need the event loop to register a new socket
-        // but on creating the thread we borrow the even_loop.
-        // So we 'give away' the connection pool and keep the channel.
-        let mut connection_pool = ConnectionPool::new();
-
-        println!("Starting event loop...");
-        // Only keep the event loop channel
-        thread::spawn(move||{
-                event_loop.run(&mut connection_pool).ok().expect("Failed to start event loop");
-            });
+        // For now, send the register to connect to the node
+        self.send_register(params)  
     }
 }
    
-pub fn create_client(address: SocketAddr)->Client{
-    Client::new(address)
-}
- 
 
 // The idea is to have a set of event loop channels to send 
 // the CqlRequests. This will be changed when we decide how 
@@ -163,12 +151,12 @@ pub struct ChannelPool {
 }
 
 impl ChannelPool {
-    fn new() -> ChannelPool {
+    pub fn new() -> ChannelPool {
         ChannelPool {
             channels: Vec::new()
         }
     }
-    fn add_channel(&mut self, channel: Sender<CqlMsg>){
+    pub fn add_channel(&mut self, channel: Sender<CqlMsg>){
         self.channels.push(channel);
     }
     // For now only use one channel (and one event loop)
