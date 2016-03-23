@@ -43,23 +43,28 @@ fn test_client() {
     let ip = "172.17.0.2";
     let port = "9042";
     let ip_port = ip.to_string()+":"+port;
-    let mut client = cql::create_client(ip_port.parse().ok().expect("Couldn't parse address"));
-    client.start();
-    //println!("Connected with CQL binary version v{}", client.version);
+    
+    let mut cluster = Cluster::new();
+    cluster.start_cluster();
+    
+    let mut response = cluster.connect_cluster(ip_port.parse().ok().expect("Couldn't parse address"));
+    println!("Result: {:?} \n", response);
+    
+    let mut future =  cluster.get_peers();
+    response = future.await().unwrap();
+    //println!("Result: {:?} \n", response);
+    //println!("Connected with CQL binary version v{}", cluster.version);
 
     // let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
     //                                        cql::CqlVarchar(Some((Cow::Borrowed("STATUS_CHANGE")))) ];
-    let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str()   )),
-                       CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
-                     ];
 
-    let future = client.send_register(params);
-    let response = try_test!(future.await().unwrap(),"Error sending register to events");
+    //let future = cluster.send_register(params);
+    //let response = try_test!(future.await().unwrap(),"Error sending register to events");
     //assert_response!(response);
-    println!("Result: {:?} \n", response);
+    //println!("Result: {:?} \n", response);
 
     // A long sleep because I'm trying to see if Cassandra sends 
     // any event message after a node change his status to up.
-    thread::sleep_ms(600000);
+    //thread::sleep_ms(600000);
 
 }

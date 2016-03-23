@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::error::Error;
 use std::thread;
 use std::sync::mpsc::channel;
+use std::rc::{Rc,Weak};
 
 use def::*;
 use def::OpcodeRequest::*;
@@ -18,27 +19,43 @@ use def::CqlValue::*;
 use connection::CqlMsg;
 use connection_pool::ConnectionPool;
 
-pub struct Node<'a> {
-    channel_pool: &'a ChannelPool, //Set of channels
+pub struct Node {
+    channel_pool: Weak<ChannelPool>, //Set of channels
     pub version: u8,
     address: SocketAddr
 }
 
-impl<'a> Node<'a>{
+impl Node{
     
-    pub fn new(address: SocketAddr,channel_pool:&'a ChannelPool) -> Node {
+    pub fn new(address: SocketAddr) -> Node {
         Node{
-            channel_pool: channel_pool,
+            channel_pool: Rc::downgrade(&Rc::new(ChannelPool::new())),
             version: CQL_MAX_SUPPORTED_VERSION,
             address: address
         }
     }
     
+    pub fn set_channel_pool(&mut self,channel_pool: Weak<ChannelPool>){
+        /*
+        match self.channel_pool {
+            Some(c) =>  panic!("Channel pool can only be set once"),
+            None    =>  self.channel_pool = Some(channel_pool),
+        }
+        */
+        self.channel_pool = channel_pool;
+    }
+
+    pub fn get_channel_pool(&self)-> Rc<ChannelPool>{
+        match self.channel_pool.upgrade() {
+            Some(ch) => ch ,
+            None     => panic!("Channel pool is None"),
+        }
+    }
     //pub fn start(&mut self){
     //    self.run_event_loop();
     //}
 
-    pub fn exec_query(&mut self, query_str: &str, con: Consistency) -> CassFuture {
+    pub fn exec_query(& self, query_str: &str, con: Consistency) -> CassFuture {
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -48,6 +65,12 @@ impl<'a> Node<'a>{
         self.send_message(q)
     }
     
+    pub fn get_peers(&self) -> CassFuture{
+        let query = "SELECT peer,data_center,host_id,rack,rpc_address,schema_version 
+                     FROM peers;";
+        self.exec_query(query,Consistency::One)
+    }
+
     pub fn exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> CassFuture{
         let q = CqlRequest {
             version: self.version,
@@ -103,9 +126,9 @@ impl<'a> Node<'a>{
         }
     }
 
-    fn send_message(&mut self,request: CqlRequest) -> CassFuture{
+    fn send_message(&self,request: CqlRequest) -> CassFuture{
         let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
-        match self.channel_pool.find_available_channel(){
+        match self.get_channel_pool().find_available_channel(){
             Ok(channel) => {
                 channel.send(CqlMsg::Request{
                                 request: request,
@@ -119,7 +142,7 @@ impl<'a> Node<'a>{
         future
     }
 
-    pub fn send_register(&mut self,params: Vec<CqlValue>) -> CassFuture{
+    pub fn send_register(&self,params: Vec<CqlValue>) -> CassFuture{
         println!("Node::send_register");
         let msg_register = CqlRequest {
             version: self.version,
@@ -131,7 +154,7 @@ impl<'a> Node<'a>{
         self.send_message(msg_register)
     }
 
-    pub fn connect(&mut self) -> CassFuture{
+    pub fn connect(&self) -> CassFuture{
         let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str()   )),
                         CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
                  ];
