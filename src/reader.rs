@@ -402,7 +402,7 @@ impl<T: Read> CqlReader for T {
            
             let version_header = header_data[0];
             let flags = header_data[1];
-            let stream = (header_data[2] as u16 + ((header_data[3] as u16) << 8)) as i16;
+            let stream = (header_data[3] as u16 + ((header_data[2] as u16) << 8)) as i16;
             let opcode = header_data[4];
             Ok(CqlFrameHeader{
                 version: version_header,
