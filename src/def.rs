@@ -77,9 +77,9 @@ pub fn opcode_response(val: u8) -> OpcodeResponse {
 
 // Stream id is -1 for Event messages
 impl OpcodeResponse {
-    pub fn isEventCode(&self) -> bool{
-        match self{
-            &OpcodeResponse::OpcodeEvent => true,
+    pub fn is_event_code(&self) -> bool{
+        match *self{
+            OpcodeResponse::OpcodeEvent => true,
             _ => false,
         }
     }
@@ -183,7 +183,8 @@ pub enum RCErrorType {
     ConnectionError,
     NoDataError,
     GenericError,
-    IOError
+    IOError,
+    EventLoopError
 }
 
 #[derive(Debug)]
@@ -347,6 +348,11 @@ pub struct CqlResponse {
     pub body: CqlResponseBody,
 }
 
+impl CqlResponse{
+    pub fn is_event(&self)-> bool{
+        self.opcode.is_event_code() && self.stream==-1
+    }
+}
 
 
 #[derive(Debug)]
@@ -389,3 +395,10 @@ pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
 pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
 pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
+
+pub fn to_hex_string(bytes: &Vec<u8>) -> String {
+  let strs: Vec<String> = bytes.iter()
+                               .map(|b| format!("{:02X}", b))
+                               .collect();
+  strs.connect(" ")
+}

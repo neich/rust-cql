@@ -11,7 +11,8 @@ use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::collections::BTreeMap;
 use std::borrow::Cow;
 use std::error::Error;
-
+use def::{RCResult,RCError};
+use def::RCErrorType::*;
 use connection::{Connection,CqlMsg,connect};
 
 
@@ -35,11 +36,7 @@ impl ConnectionPool {
     fn get_connection_with_ip(&mut self,event_loop: &mut EventLoop<ConnectionPool>,address:&IpAddr) -> Result<&mut Connection,&'static str>{
         println!("[ConnectionPool::get_connection_with_ip]");
         if !self.exists_connection_by_ip(address){
-            println!("Connection doesn't exist, let's create it!");
-            let mut conn = connect(SocketAddr::new(address.clone(),9042),None,event_loop).ok().expect("Couldn't unwrap the connection");
-
-            let token = self.add_connection(address.clone(),conn).ok().expect("Couldn't unwrap the token");
-            self.pending_startup.push(token);
+            let token = self.create_connection(event_loop,address).unwrap();
             return self.find_connection_by_token(token)
         }
         else {
@@ -47,11 +44,18 @@ impl ConnectionPool {
         }
     }
     
+    fn create_connection(&mut self,event_loop: &mut EventLoop<ConnectionPool>,address:&IpAddr) -> RCResult<Token>{
+        println!("[ConnectionPool::create_connection]");
+        let mut conn = try_rc!(connect(SocketAddr::new(address.clone(),9042),None,event_loop),"");
+        let token = try_rc!(self.add_connection(address.clone(),conn),"");
+        
+        self.pending_startup.push(token);
+        Ok(token)
+    }
 
-    fn add_connection(&mut self, address:IpAddr,connection: Connection)-> Result<Token,&'static str>{
+    fn add_connection(&mut self, address:IpAddr,connection: Connection)-> RCResult<Token>{
         println!("[ConnectionPool::add_connection]");
         let result = self.connections.insert(connection);
-
         match result{
             Ok(token) => {
                 {
@@ -62,8 +66,7 @@ impl ConnectionPool {
                 Ok(token)
             },
             Err(err) => {
-                println!("Couldn't insert a new connection");
-                Err("Couldn't insert a new connection")
+                Err(RCError::new("Credential should be provided for authentication", ReadError))
             }
         }
     }
@@ -113,8 +116,7 @@ impl mio::Handler for ConnectionPool {
             CqlMsg::Request{..} => {
                 let mut result = self.get_connection_with_ip(event_loop,&msg.get_ip());  
                 // Here is where we should do create a new connection if it doesn't exists.
-                // We do the connect, and then we can do the send_startup with the queue_message
-                // and wait for the response
+                // Connect, then send_startup with the queue_message
                 match result {
                     Ok(conn) =>{
                         // Ineficient, consider using a LinkedList
@@ -122,15 +124,26 @@ impl mio::Handler for ConnectionPool {
                         conn.reregister(event_loop,EventSet::writable());
                     },
                     Err(err) =>{
-
+                        //TO-DO 
+                        //Complete all requests with connection error
+                    }
+                }
+            },
+            CqlMsg::Connect{..} => {
+                let mut result = self.create_connection(event_loop,&msg.get_ip());
+                match result {
+                    Ok(token) =>{
+                        // Ineficient, consider using a LinkedList
+                        let conn = self.find_connection_by_ip(&msg.get_ip()).unwrap();
+                        conn.insert_request(msg);
+                    },
+                    Err(err) =>{
+                        // Complete the future with the error
                     }
                 }
             },
             CqlMsg::Shutdown => {
                 event_loop.shutdown();
-            },
-            _ => {
-                unimplemented!();
             },
         }
     }
@@ -148,17 +161,9 @@ impl mio::Handler for ConnectionPool {
             let pair = connection.read_cql_response();
             let response = pair.0;
             let is_event = pair.1;
-            println!("Response from event_loop: {:?}",response);
-            if is_event {
-                println!("It seems we've got an Event message!");
-                // Do proper stuff with the Event message here
-            }
-            else {
-                // Completes the future with a CqlResponse
-                // which is a RCResult<CqlResponse>
-                // so we can handle errors properly
-                connection.handle_response(response,event_loop);
-            }
+            //println!("Response from event_loop: {:?}",response);
+            println!("Handling response..");
+            connection.handle_response(response,event_loop,is_event);
         }
 
         if events.is_writable() && connection.are_pendings(){

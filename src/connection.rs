@@ -31,7 +31,9 @@ pub struct Connection {
     // Pending messages to be send (CQL requests)
     pendings: Vec<CqlMsg>,
     // CQL version v1, v2 or v3
-    version: u8
+    version: u8,
+    //Temporal bool
+    pub register: bool 
 }
 
 pub enum CqlMsg{
@@ -40,8 +42,10 @@ pub enum CqlMsg{
         tx: Complete<RCResult<CqlResponse>,()>,
         address: SocketAddr
     },
-    StartupRequest{
-        request: CqlRequest
+    Connect{
+        request: CqlRequest,
+        tx: Complete<RCResult<CqlResponse>,()>,
+        address: SocketAddr
     },
     Shutdown
 }
@@ -53,8 +57,11 @@ impl CqlMsg{
             &CqlMsg::Request{ref request,ref tx,ref address} => {
                 address.ip().clone()
             }
+            &CqlMsg::Connect{ref request,ref tx,ref address} => {
+                address.ip().clone()
+            }
             _ =>{
-                panic!("Only CqlMsg::Request has IP");
+                panic!("Invalid type for get_ip");
             }
         }
     }
@@ -65,12 +72,18 @@ impl Connection {
     pub fn new(socket:TcpStream,version: u8)-> Connection{
         Connection {
             socket: socket,
-            token: Token(0),
+            token: Token(1),
             response: CassResponse::new(),
             pendings: Vec::new(),
-            version: version
+            version: version,
+            register: false
         }
     }
+
+    pub fn reset_response(&mut self){
+        self.response = CassResponse::new();
+    }
+
     pub fn set_token(&mut self, token: Token){
         self.token = token;
     }
@@ -91,10 +104,12 @@ impl Connection {
             Ok(Some(n)) => {
                 println!("read {} bytes", n);
                 // self.read(event_loop);  // Recursion here, care
-                // Re-register the socket with the event loop. The current
-                // state is used to determine whether we are currently reading
-                // or writing.
-                self.reregister(event_loop,EventSet::writable());
+                if self.pendings.len() == 1{
+                    self.reregister(event_loop,EventSet::readable());
+                }
+                else{
+                    self.reregister(event_loop,EventSet::writable());
+                }
             }
             Ok(None) => {
                 println!("Reading buf = None");
@@ -117,14 +132,16 @@ impl Connection {
                 request.serialize(&mut buf,self.version);
                 self.pendings.push(CqlMsg::Request{request:request,tx:tx,address:address});
              },
-             CqlMsg::StartupRequest{request} =>{
+             CqlMsg::Connect{request,tx,address} =>{
                 request.serialize(&mut buf,self.version);
-                self.pendings.push(CqlMsg::StartupRequest{request:request});
+                self.pendings.push(CqlMsg::Connect{request:request,tx:tx,address:address});
+                //Last??
              },
              CqlMsg::Shutdown => {
                 panic!("Shutdown messages shouldn't be at pendings");
              },
         }
+        //println!("Serialized: {:?}",buf);
         match self.socket.try_write_buf(&mut buf.flip()) 
             {
             Ok(Some(n)) => {
@@ -152,7 +169,7 @@ impl Connection {
         // with the notifications that we want. When we are currently reading from
         // the client, we want `readable` socket notifications. When we are writing
         // to the client, we want `writable` notifications.
-        println!("Connection::reregister");
+        println!("Connection::reregister for: {:?}",events);
         println!("Registering socket ip: {:?} ",self.socket.peer_addr().ok().expect("Couldn't unwrap ip").ip());
         event_loop.reregister(&self.socket, self.token, events,  mio::PollOpt::oneshot())
                   .ok().expect("Couldn't reregister connection");
@@ -162,20 +179,15 @@ impl Connection {
     pub fn register(&self, event_loop: &mut EventLoop<ConnectionPool>,events : EventSet) {
 
         println!("Connection::register");
-        println!("Registering socket ip: {:?} ",self.socket.peer_addr().ok().expect("Couldn't unwrap ip").ip());
+        //println!("Registering socket ip: {:?} ",self.socket.peer_addr().ok().expect("Couldn't unwrap ip").ip());
         event_loop.register(&self.socket, 
                             self.token, 
                             events,  
                             mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
-                            //.ok().expect("Couldn't register connection");
     }
 
-    pub fn queue_message(&mut self,event_loop: &mut EventLoop<ConnectionPool>,request: CqlRequest){
-        println!("Connection::queue_message");
-        let msg = CqlMsg::StartupRequest{request: request};  
-
-        //We still need the address, we can get it from the socket, store it in Connection, etc.
-        self.pendings.push(msg);    //Inserted in the last position to give it more priority
+    pub fn queue_message(&mut self,event_loop: &mut EventLoop<ConnectionPool>,request: CqlMsg){
+        self.pendings.push(request);    //Inserted in the last position to give it more priority
         self.reregister(event_loop,EventSet::writable());
     }
 
@@ -246,28 +258,49 @@ impl Connection {
             opcode: OpcodeStartup,
             body: RequestStartup(body),
         };
-        let mut future = self.queue_message(event_loop,msg_startup);
+        let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
+
+        let msg_connect = CqlMsg::Connect{
+            request: msg_startup,
+            tx: tx,
+            address: self.socket.peer_addr().ok().expect("Couldn't unwrap SocketAddr")
+        };
+        let mut future = self.queue_message(event_loop,msg_connect);
     }
 
     pub fn read_cql_response(&self) -> (RCResult<CqlResponse>,bool){
         self.response.read_cql_response(self.version)
     }
 
-    pub fn handle_response(&mut self,response: RCResult<CqlResponse>, event_loop: &mut EventLoop<ConnectionPool>){
-        match self.pendings
-                  .pop()
-                  .take()
-                  .unwrap() 
-        {
-            CqlMsg::Request{request,tx,address} => {
-               tx.complete(response);
-            },
-            CqlMsg::StartupRequest{request} => {
-                self.continue_startup_request(response.unwrap(),event_loop);
-            },
-            CqlMsg::Shutdown => {
-                panic!("Shutdown messages shouldn't be at pendings");
-            },
+    pub fn handle_response(&mut self,response: RCResult<CqlResponse>, event_loop: &mut EventLoop<ConnectionPool>, is_event : bool ){
+        if is_event {
+            println!("It seems we've got an event!")
+            //Do event stuff
+        }
+        else{
+            // Completes the future with a CqlResponse
+            // which is a RCResult<CqlResponse>
+            // so we can handle errors properly
+            if self.are_pendings(){
+                match self.pendings
+                          .pop()
+                          .take()
+                          .unwrap() 
+                {
+                    CqlMsg::Request{request,tx,address} => {
+                        tx.complete(response);
+                        self.reset_response();
+                    },
+                    CqlMsg::Connect{request,tx,address} => {
+                        //let result = self.continue_startup_request(response.clone().unwrap(),event_loop);
+                        tx.complete(response);
+                        self.reset_response();
+                    },
+                    CqlMsg::Shutdown => {
+                        panic!("Shutdown messages shouldn't be at pendings");
+                    },
+                }
+            }
         }
     }
 }
@@ -283,10 +316,10 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>,event_loop: &mut E
     }
     let mut socket = res.ok().expect("Failed to unwrap the socket");
     let mut conn = Connection::new(socket,version);
+    conn.register = true;   //test
     // Once a connection is created we have to register it
-    // then we can 'reregister' if necessary
+    // then we can later 'reregister' if necessary
     conn.register(event_loop,EventSet::writable());
-
     conn.send_startup(creds.clone(),event_loop);
     Ok(conn)
 }
@@ -317,10 +350,23 @@ impl CassResponse {
     }
 
     pub fn read_cql_response(&self,version: u8) -> (RCResult<CqlResponse>,bool){
-            let bytes_buf = self.read_buf().bytes();   
-            // By now, just copy it to avoid borrowing troubles
-            let mut response : ByteBuf = ByteBuf::from_slice(bytes_buf);
-            (response.read_cql_response(version),
-            response.cql_response_is_event(version).ok().expect("Couldn't read response"))
+        println!("Connection::CassResponse::read_cql_response");
+        let bytes_buf = self.read_buf().bytes();   
+        println!("CqlResponseBytes := {:?}",to_hex_string(&bytes_buf.to_vec()));
+        // By now, just copy it to avoid borrowing troubles
+        let mut response : ByteBuf = ByteBuf::from_slice(bytes_buf);
+        let rc_result = response.read_cql_response(version);
+        let cql_response =  match rc_result {
+            Ok(val) => val,
+            Err(ref err) => {
+                use std::error::Error;
+                println!("We've got an error there: {:?}",err);
+                return (Err(RCError::new(format!("{} -> {}", "", err.description()), RCErrorType::IOError)),false)
+            }
+        };
+        println!("CqlResponse := {:?}",cql_response);
+        let is_event = cql_response.is_event();
+        (Ok(cql_response),is_event)
     }
+
 }

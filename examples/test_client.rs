@@ -50,9 +50,19 @@ fn test_client() {
     let mut response = cluster.connect_cluster(ip_port.parse().ok().expect("Couldn't parse address"));
     println!("Result: {:?} \n", response);
     
-    let mut future =  cluster.get_peers();
+    //let mut future =  cluster.get_peers();
+    //response = future.await().unwrap();
+    //println!("Result peers: {:?} \n", response);
+
+    let mut future =  cluster.register();
     response = future.await().unwrap();
+    println!("Result peers: {:?} \n", response);
+
+    //let q = "select * from rust.test";
+    //println!("cql::Query: {}", q);
+    //response = cluster.exec_query(q, cql::Consistency::One).await().ok().expect("Error selecting from table test");
     //println!("Result: {:?} \n", response);
+
     //println!("Connected with CQL binary version v{}", cluster.version);
 
     // let params = vec![cql::CqlVarchar(Some((Cow::Borrowed("TOPOLOGY_CHANGE")))), 
@@ -65,6 +75,6 @@ fn test_client() {
 
     // A long sleep because I'm trying to see if Cassandra sends 
     // any event message after a node change his status to up.
-    //thread::sleep_ms(600000);
+    thread::sleep_ms(600000);
 
 }

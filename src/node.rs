@@ -54,6 +54,9 @@ impl Node{
     //pub fn start(&mut self){
     //    self.run_event_loop();
     //}
+    pub fn get_latency(&self) ->usize{
+        1
+    }
 
     pub fn exec_query(& self, query_str: &str, con: Consistency) -> CassFuture {
         let q = CqlRequest {
@@ -66,8 +69,10 @@ impl Node{
     }
     
     pub fn get_peers(&self) -> CassFuture{
-        let query = "SELECT peer,data_center,host_id,rack,rpc_address,schema_version 
-                     FROM peers;";
+        //let query = "SELECT peer,data_center,host_id,rack,rpc_address,schema_version 
+        //             FROM system.peers;";
+        let query = "SELECT peer,data_center,host_id,rack,rpc_address
+                     FROM system.peers;";
         self.exec_query(query,Consistency::One)
     }
 
@@ -144,6 +149,10 @@ impl Node{
 
     pub fn send_register(&self,params: Vec<CqlValue>) -> CassFuture{
         println!("Node::send_register");
+                let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str())),
+                        CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() )),
+                        CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
+                ];
         let msg_register = CqlRequest {
             version: self.version,
             flags: 0x00,
@@ -155,12 +164,29 @@ impl Node{
     }
 
     pub fn connect(&self) -> CassFuture{
-        let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str()   )),
-                        CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
-                 ];
-
-        // For now, send the register to connect to the node
-        self.send_register(params)  
+        let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
+        let body = CqlStringMap {
+            pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(self.version-1) as usize]}],
+        };
+        let msg_startup = CqlRequest {
+            version: self.version,
+            flags: 0x00,
+            stream: 0x01,
+            opcode: OpcodeStartup,
+            body: RequestStartup(body),
+        };
+        match self.get_channel_pool().find_available_channel(){
+            Ok(channel) => {
+                channel.send(CqlMsg::Connect{
+                                request: msg_startup,
+                                tx: tx,
+                                address: self.address});
+            },
+            Err(e) => {
+                tx.complete(Err(RCError::new("Sending error", IOError)));
+            },
+        }
+        future
     }
 }
    

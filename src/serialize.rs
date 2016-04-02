@@ -185,7 +185,8 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
                 4 + token.len()
             },
             RequestRegister(ref params) => {
-                4 + params.len()
+                let values_size:usize = params.iter().fold(0, |a, ref b| a +2+ b.len(version));
+                2 + values_size
             },
             _ => 0
         }

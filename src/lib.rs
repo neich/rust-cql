@@ -22,6 +22,7 @@ pub use def::OpcodeResponse;
 pub use def::CqlResponseBody;
 pub use def::RCResult;
 pub use def::RCError;
+pub use reader::CqlReader;
 
 #[macro_export]
 macro_rules! try_bo(
@@ -96,4 +97,5 @@ mod serialize;
 mod connection;
 mod connection_pool;
 mod node;
+mod load_balancing;
 pub mod cluster;

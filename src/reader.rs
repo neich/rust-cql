@@ -52,11 +52,10 @@ pub trait CqlReader {
 
     fn read_cql_value(&mut self, col_meta: &CqlColMetadata, collection_size: CqlBytesSize) -> RCResult<CqlValue>;
     fn read_cql_value_single(&mut self, col_type: &CqlValueType, value_size: CqlBytesSize) -> RCResult<CqlValue>;
-    fn cql_response_is_event(&mut self, version: u8) -> RCResult<bool>;
 }
 
 
-impl<T: std::io::Read> CqlReader for T {
+impl<T: Read> CqlReader for T {
     fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
         let len:i32 = match val_type {
             CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length"),
@@ -522,11 +521,6 @@ impl<T: std::io::Read> CqlReader for T {
         })
     }
 
-    fn cql_response_is_event(&mut self, version: u8) -> RCResult<bool> {
-        let header = try_rc!(self.read_cql_frame_header(version), "Error reading CQL frame header");
-        let opcode = opcode_response(header.opcode);
-        Ok(header.stream==-1 && opcode.isEventCode())
-    }
 }
 
 
