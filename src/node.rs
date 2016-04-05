@@ -149,9 +149,9 @@ impl Node{
 
     pub fn send_register(&self,params: Vec<CqlValue>) -> CassFuture{
         println!("Node::send_register");
-                let params = vec![ CqlVarchar( Some(CqlEventType::EventStatusChange.get_str())),
-                        CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() )),
-                        CqlVarchar( Some(CqlEventType::EventTopologyChange.get_str() ))
+                let params = vec![ CqlVarchar( Some(CqlEventType::StatusChange.get_str())),
+                        CqlVarchar( Some(CqlEventType::TopologyChange.get_str() )),
+                        CqlVarchar( Some(CqlEventType::TopologyChange.get_str() ))
                 ];
         let msg_register = CqlRequest {
             version: self.version,

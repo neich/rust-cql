@@ -3,14 +3,15 @@ extern crate std;
 extern crate byteorder;
 extern crate num;
 
-use super::def::*;
-use super::def::CqlValue::*;
-use super::def::CqlValueType::*;
-use super::def::CqlResponseBody::*;
-use super::def::RCErrorType::*;
-use super::def::CqlBytesSize::*;
-use super::def::KindResult::*;
-use super::def::OpcodeResponse::*;
+use def::*;
+use def::CqlValue::*;
+use def::CqlValueType::*;
+use def::CqlResponseBody::*;
+use def::CqlEvent::*;
+use def::RCErrorType::*;
+use def::CqlBytesSize::*;
+use def::KindResult::*;
+use def::OpcodeResponse::*;
 
 use self::uuid::Uuid;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -37,7 +38,7 @@ pub trait CqlReader {
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>>;
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
     fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>>;
-    fn read_cql_list_events(&mut self, val_type: CqlBytesSize) -> RCResult<CQLList>;
+    fn read_cql_event(&mut self, val_type: CqlBytesSize) -> RCResult<CqlEvent>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>>;
@@ -52,6 +53,8 @@ pub trait CqlReader {
 
     fn read_cql_value(&mut self, col_meta: &CqlColMetadata, collection_size: CqlBytesSize) -> RCResult<CqlValue>;
     fn read_cql_value_single(&mut self, col_type: &CqlValueType, value_size: CqlBytesSize) -> RCResult<CqlValue>;
+
+
 }
 
 
@@ -59,7 +62,7 @@ impl<T: Read> CqlReader for T {
     fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
         let len:i32 = match val_type {
             CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length"),
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as i32
+            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as i32,
         }; 
 
         if len < 0 {
@@ -181,20 +184,69 @@ impl<T: Read> CqlReader for T {
         Ok(Some(list))
     }
 
-    fn read_cql_list_events(&mut self, val_type: CqlBytesSize) -> RCResult<CQLList> {
-        try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
-        let len = match val_type {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
-        };
+    fn read_cql_event(&mut self, val_type: CqlBytesSize) -> RCResult<CqlEvent> {
 
-        let mut list: CQLList = vec![];
-        for _ in 0 .. len {
-            let col = try_rc!(self.read_cql_str(val_type), "Error reading list value");
-            list.push(CqlVarchar(col));
+        let event_type = try_rc!(self.read_cql_str(val_type), "Error reading event type (str)").unwrap();
+        
+        let event_type = CqlEventType::from_str(&event_type.to_string());
+        println!("{:?}", event_type);
+        let error_msg = "Error reading ";
+        match event_type {
+            CqlEventType::TopologyChange =>{
+                let msg = error_msg.to_string() + "CqlEventType::TopologyChange : "; 
+                let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
+                                  .unwrap();
+                let address = try_rc!(self.read_cql_inet(val_type), msg+" inet (address)");
+                
+                Ok(CqlEvent::TopologyChange(TopologyChangeType::from_str(
+                                            &change_type.to_string()),
+                                            address.unwrap()))
+            },
+            CqlEventType::StatusChange =>{
+                println!("Line 206");
+                let msg = error_msg.to_string() + "CqlEventType::StatusChange : "; 
+                let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
+                                  .unwrap();
+                                  println!("Line 210");
+                let address = try_rc!(self.read_cql_inet(val_type), msg+" inet (address)");
+                println!("Line 212");
+                Ok(CqlEvent::StatusChange(  StatusChangeType::from_str(
+                                            &change_type.to_string()),
+                                            address.unwrap()))
+            },
+            CqlEventType::SchemaChange =>{
+                let msg = error_msg.to_string() +"CqlEventType::SchemaChange : "; 
+                let change_type = try_rc!(self.read_cql_str(val_type), msg+"change_type (str)");
+                let target = try_rc!(self.read_cql_str(val_type), msg+" target (str)").unwrap();
+
+                let options =
+                    match target{
+                        Cow::Borrowed(SCHEMA_CHANGE_TARGET_KEYSPACE) => {
+                            let option = try_rc!(self.read_cql_str(val_type), msg+" options (str)").unwrap();
+                            Ok(SchemaChangeOptions::Keyspace(option))
+                        },
+                        Cow::Borrowed(SCHEMA_CHANGE_TARGET_TABLE) => {
+                            let option1 = try_rc!(self.read_cql_str(val_type), msg+" option1 (str)").unwrap();
+                            let option2 = try_rc!(self.read_cql_str(val_type), msg+" option2 (str)").unwrap();
+                            Ok(SchemaChangeOptions::Table(option1,option2))
+                        },
+                        Cow::Borrowed(SCHEMA_CHANGE_TARGET_TYPE) => {
+                            let option1 = try_rc!(self.read_cql_str(val_type), msg+" option1 (str)").unwrap();
+                            let option2 = try_rc!(self.read_cql_str(val_type), msg+" option2 (str)").unwrap();
+                            Ok(SchemaChangeOptions::Type(option1,option2))
+                        },
+                        _ => Err(RCError::new("Unknown schema change type: ", ReadError))
+                    };
+
+                Ok(CqlEvent::SchemaChange(  SchemaChangeType::from_str(
+                                            &change_type.unwrap().to_string()),
+                                            options.unwrap()))
+            },
+            _=> Err(RCError::new("Unknown EventType", ReadError))
         }
-        Ok(list)
     }
+
+
 
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading set size");
@@ -505,11 +557,11 @@ impl<T: Read> CqlReader for T {
             }
             OpcodeEvent => {
                 println!("Reader.read_cql_response -> OpcodeEvent");
-                ResponseEvent(try_rc!(reader.read_cql_list_events(CqlBytesSize::Cqli16), "Error reading ResponseEvent"))
+                ResponseEvent(try_rc!(reader.read_cql_event(CqlBytesSize::Cqli16), "Error reading ResponseEvent"))
             }
             _ => {
                 ResultUnknown
-            },//ResponseEmpty,
+            },
         };
 
         Ok(CqlResponse {

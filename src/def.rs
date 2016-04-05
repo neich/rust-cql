@@ -156,23 +156,122 @@ pub fn cql_column_type(val: u16) -> CqlValueType {
     }
 }
 
+pub const TOPOLOGY_CHANGE:  &'static str = "TOPOLOGY_CHANGE";
+pub const STATUS_CHANGE:  &'static str = "STATUS_CHANGE";
+pub const SCHEMA_CHANGE:  &'static str = "SCHEMA_CHANGE";
+
+pub const TOPOLOGY_CHANGE_NEW_NODE:  &'static str = "NEW_NODE";
+pub const TOPOLOGY_CHANGE_REMOVED_NODE:  &'static str = "REMOVED_NODE";
+pub const TOPOLOGY_CHANGE_MOVED_NODE:  &'static str = "MOVED_NODE";
+
+pub const STATUS_CHANGE_UP:  &'static str = "UP";
+pub const STATUS_CHANGE_DOWN:  &'static str = "DOWN";
+
+pub const SCHEMA_CHANGE_TYPE_CREATED:  &'static str = "CREATED";
+pub const SCHEMA_CHANGE_TYPE_UPDATED:  &'static str = "UPDATED";
+pub const SCHEMA_CHANGE_TYPE_DROPPED:  &'static str = "DROPPED";
+
+pub const SCHEMA_CHANGE_TARGET_KEYSPACE:  &'static str = "KEYSPACE";
+pub const SCHEMA_CHANGE_TARGET_TABLE:  &'static str = "TABLE";
+pub const SCHEMA_CHANGE_TARGET_TYPE:  &'static str = "TYPE";
+
 #[derive(Debug)]
 pub enum CqlEventType {
-    EventTopologyChange,
-    EventStatusChange,
-    EventSchemaChange,
-    EventUnknow
+    TopologyChange,
+    StatusChange,
+    SchemaChange,
+    UnknowEventType
 }
 
+
 impl CqlEventType{
+    pub fn from_str(str: &str) -> CqlEventType {
+        match str {
+            TOPOLOGY_CHANGE  => CqlEventType::TopologyChange,
+            STATUS_CHANGE    => CqlEventType::StatusChange,
+            SCHEMA_CHANGE    => CqlEventType::SchemaChange,
+            _ => CqlEventType::UnknowEventType
+        }
+    }
+
     pub fn get_str(&self) -> CowStr {
         match *self {
-            CqlEventType::EventTopologyChange => Cow::Borrowed("TOPOLOGY_CHANGE"),
-            CqlEventType::EventStatusChange => Cow::Borrowed("STATUS_CHANGE"),
-            CqlEventType::EventSchemaChange => Cow::Borrowed("SCHEMA_CHANGE"),
+            CqlEventType::TopologyChange   => Cow::Borrowed(TOPOLOGY_CHANGE),
+            CqlEventType::StatusChange     => Cow::Borrowed(STATUS_CHANGE),
+            CqlEventType::SchemaChange     => Cow::Borrowed(SCHEMA_CHANGE),
             _ => Cow::Borrowed("UNKNOWN_EVENT")
         }
     }
+}
+
+#[derive(Debug)]
+pub enum CqlEvent {
+    TopologyChange(TopologyChangeType,IpAddress),
+    StatusChange(StatusChangeType,IpAddress),
+    SchemaChange(SchemaChangeType,SchemaChangeOptions),
+    UnknownEvent
+}
+
+#[derive(Debug)]
+pub enum TopologyChangeType{
+    NewNode,
+    RemovedNode,
+    MovedNode,
+    Unknown
+}
+
+impl TopologyChangeType{
+    pub fn from_str(string: &str) -> TopologyChangeType {
+        match string {
+            TOPOLOGY_CHANGE_NEW_NODE         => TopologyChangeType::NewNode,
+            TOPOLOGY_CHANGE_REMOVED_NODE     => TopologyChangeType::RemovedNode,
+            TOPOLOGY_CHANGE_MOVED_NODE       => TopologyChangeType::MovedNode,
+            _ => TopologyChangeType::Unknown
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum StatusChangeType{
+    Up,
+    Down,
+    Unknown
+}
+
+impl StatusChangeType{
+    pub fn from_str(string: &str) -> StatusChangeType {
+        match string {
+            STATUS_CHANGE_UP      => StatusChangeType::Up,
+            STATUS_CHANGE_DOWN     => StatusChangeType::Down,
+            _ => StatusChangeType::Unknown
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum SchemaChangeType{
+    Created,
+    Updated,
+    Dropped,
+    Unknown
+}
+
+impl SchemaChangeType{
+    pub fn from_str(string: &str) -> SchemaChangeType {
+        match string {
+            SCHEMA_CHANGE_TYPE_CREATED     => SchemaChangeType::Created,
+            SCHEMA_CHANGE_TYPE_UPDATED     => SchemaChangeType::Updated,
+            SCHEMA_CHANGE_TYPE_DROPPED     => SchemaChangeType::Dropped,
+            _ => SchemaChangeType::Unknown
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum SchemaChangeOptions{
+    Keyspace(CowStr),
+    Table(CowStr,CowStr),
+    Type(CowStr,CowStr)
 }
 
 #[derive(Debug)]
@@ -362,7 +461,7 @@ pub enum CqlResponseBody {
     ResponseAuthenticate(CowStr),
     ResponseAuthChallenge(Vec<u8>),
     ResponseAuthSuccess(Vec<u8>),
-    ResponseEvent(CQLList),
+    ResponseEvent(CqlEvent),
 
     ResultVoid,
     ResultRows(CqlRows),
