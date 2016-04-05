@@ -4,8 +4,7 @@ extern crate uuid;
 extern crate mio;
 extern crate eventual;
 
-use std::net::Ipv4Addr;
-use std::net::Ipv6Addr;
+use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr};
 use self::uuid::Uuid;
 use std::borrow::Cow;
 use std::ops::Deref;
@@ -206,8 +205,8 @@ impl CqlEventType{
 
 #[derive(Debug)]
 pub enum CqlEvent {
-    TopologyChange(TopologyChangeType,IpAddress),
-    StatusChange(StatusChangeType,IpAddress),
+    TopologyChange(TopologyChangeType,SocketAddr),
+    StatusChange(StatusChangeType,SocketAddr),
     SchemaChange(SchemaChangeType,SchemaChangeOptions),
     UnknownEvent
 }
@@ -346,7 +345,8 @@ pub struct CqlPair {
 #[derive(Debug, Clone, Copy)]
 pub enum CqlBytesSize {
    Cqli32,
-   Cqli16 
+   Cqli16,
+   Cqli8 
 }
 
 pub struct CqlTableDesc {
@@ -393,7 +393,7 @@ pub enum CqlValue {
     CqlDecimal(Option<num::BigInt>),
     CqlDouble(Option<f64>),
     CqlFloat(Option<f32>),
-    CqlInet(Option<IpAddress>),
+    CqlInet(Option<SocketAddr>),
     CqlInt(Option<i32>),
     CqlList(Option<CQLList>),
     CqlMap(Option<CQLMap>),

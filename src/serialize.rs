@@ -1,8 +1,7 @@
 extern crate std;
 extern crate byteorder;
 
-use std::net::Ipv4Addr;
-use std::net::Ipv6Addr;
+use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr};
 use std::borrow::Cow;
 use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian, Error};
 use std::mem;
@@ -25,6 +24,7 @@ macro_rules! write_size(
         match $bytes_size {
             Cqli16 => try_bo!($buf.write_i16::<BigEndian>($size as i16), "Error serializing CqlValue (length of [short bytes])"),
             Cqli32 => try_bo!($buf.write_i32::<BigEndian>($size as i32), "Error serializing CqlValue (length of [bytes])"),
+            _ => unimplemented!()
         }
     }
 );
@@ -295,18 +295,24 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             },
             CqlInet(ref o) => match *o {
                 Some(ref ip) => match *ip {
-                    IpAddress::Ipv4(ref ipv4) => {
+                    SocketAddr::V4(ref sock_addr) => {
+                        let ipv4 = sock_addr.ip();
+                        let port = sock_addr.port();
                         write_size!(buf, 5, bytes_size);
-                        try_bo!(buf.write_u8(4), "Error serializing CqlValue (Ipv4Addr size)");
-                        try_io!(buf.write(&ipv4.octets()), "Error serializing CqlValue (Ipv4Addr)");
+                        try_bo!(buf.write_u8(4), "Error serializing CqlValue (Inet)(Ipv4Addr size)");
+                        try_io!(buf.write(&ipv4.octets()), "Error serializing CqlValue (Inet)(Ipv4Addr)");
+                        try_bo!(buf.write_i32::<BigEndian>(port as i32), "Error serializing CqlValue (Inet)(Port)");
                         Ok(())
                     },
-                    IpAddress::Ipv6(ref ipv6) => {
+                    SocketAddr::V6(ref sock_addr) => {
+                        let ipv6 = sock_addr.ip();
+                        let port = sock_addr.port();
                         write_size!(buf, 17, bytes_size);
-                        try_bo!(buf.write_u8(16u8), "Error serializing CqlValue (Ipv6Addr size)");
+                        try_bo!(buf.write_u8(16u8), "Error serializing CqlValue (Inet)(Ipv6Addr size)");
                         for n in ipv6.segments().iter() {
-                            try_io!(buf.write_u16::<BigEndian>(*n), "Error serializing CqlValue (Ipv6Addr)");
+                            try_io!(buf.write_u16::<BigEndian>(*n), "Error serializing CqlValue (Inet)(Ipv6Addr)");
                         }
+                        try_bo!(buf.write_i32::<BigEndian>(port as i32), "Error serializing CqlValue (Inet)(Port)");
                         Ok(())
                     },
                 },
@@ -442,8 +448,8 @@ impl<'a> CqlSerializable<'a> for CqlValue {
             },
             &CqlInet(ref o) => match *o {
                 Some(ref ip) => match *ip {
-                    IpAddress::Ipv4(_) => 5,
-                    IpAddress::Ipv6(_) => 17
+                    SocketAddr::V4(_) => 1+4+4,
+                    SocketAddr::V6(_) => 1+16+4
                 },
                 None => 0
             },

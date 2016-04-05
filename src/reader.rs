@@ -14,7 +14,7 @@ use def::KindResult::*;
 use def::OpcodeResponse::*;
 
 use self::uuid::Uuid;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr,Ipv4Addr, Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
 use std::borrow::{Cow, ToOwned};
 use std::io::{Read, Write, Cursor};
 use self::byteorder::{ReadBytesExt, BigEndian, LittleEndian};
@@ -37,7 +37,7 @@ pub trait CqlReader {
     fn read_cql_blob(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Vec<u8>>>;
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>>;
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>>;
+    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>>;
     fn read_cql_event(&mut self, val_type: CqlBytesSize) -> RCResult<CqlEvent>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
@@ -74,7 +74,13 @@ impl<T: Read> CqlReader for T {
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32> {
         match val_type {
             CqlBytesSize::Cqli32 => Ok(try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length")),
-            CqlBytesSize::Cqli16 => Ok(try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as i32)
+            CqlBytesSize::Cqli16 => Ok(try_bo!(self.read_i16::<BigEndian>(), "Error reading bytes length") as i32),
+            CqlBytesSize::Cqli8  => {
+                let size = 1;
+                let mut buf = Vec::with_capacity(size);
+                try_io!(std::io::copy(&mut self.take(size as u64), &mut buf), "Error at read_exact");
+                Ok(buf[0] as i32)
+            },
         }       
     }
 
@@ -145,22 +151,32 @@ impl<T: Read> CqlReader for T {
         }      
     }
 
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddress>> {
+    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>> {
         let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
-        if vec.len() == 0 {
-            Ok(None)
-        } else if vec.len() == 4 {
-            Ok(Some(IpAddress::Ipv4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3]))))
-        } else {
-            Ok(Some(IpAddress::Ipv6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
-              vec[3] as u16 + ((vec[2] as u16) << 8),
-              vec[5] as u16 + ((vec[4] as u16) << 8),
-              vec[7] as u16 + ((vec[6] as u16) << 8),
-              vec[9] as u16 + ((vec[8] as u16) << 8),
-              vec[11] as u16 + ((vec[10] as u16) << 8),
-              vec[13] as u16 + ((vec[12] as u16) << 8),
-              vec[15] as u16 + ((vec[14] as u16) << 8)))))     
+        let ip =
+            if vec.len() == 0 {
+                None
+            } 
+            else if vec.len() == 4 {
+                Some(IpAddr::V4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3])))
+            } 
+            else {
+                 Some(IpAddr::V6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
+                  vec[3] as u16 + ((vec[2] as u16) << 8),
+                  vec[5] as u16 + ((vec[4] as u16) << 8),
+                  vec[7] as u16 + ((vec[6] as u16) << 8),
+                  vec[9] as u16 + ((vec[8] as u16) << 8),
+                  vec[11] as u16 + ((vec[10] as u16) << 8),
+                  vec[13] as u16 + ((vec[12] as u16) << 8),
+                  vec[15] as u16 + ((vec[14] as u16) << 8)))) 
+            };
+        let port = try_bo!(self.read_i32::<BigEndian>(), "Error reading port");
+
+        match ip {
+            Some(ip) => Ok(Some(SocketAddr::new(ip,(port as u16)))),
+            None => Ok(None)
         }
+        
     }
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>> {
@@ -187,7 +203,7 @@ impl<T: Read> CqlReader for T {
                 let msg = error_msg.to_string() + "CqlEventType::TopologyChange : "; 
                 let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
                                   .unwrap();
-                let address = try_rc!(self.read_cql_inet(val_type), msg+" inet (address)");
+                let address = try_rc!(self.read_cql_inet(CqlBytesSize::Cqli8), msg+" inet (address)");
                 
                 Ok(CqlEvent::TopologyChange(TopologyChangeType::from_str(
                                             &change_type.to_string()),
@@ -199,7 +215,7 @@ impl<T: Read> CqlReader for T {
                 let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
                                   .unwrap();
                                   println!("Line 210");
-                let address = try_rc!(self.read_cql_inet(val_type), msg+" inet (address)");
+                let address = try_rc!(self.read_cql_inet(CqlBytesSize::Cqli8), msg+" inet (address)");
                 println!("Line 212");
                 Ok(CqlEvent::StatusChange(  StatusChangeType::from_str(
                                             &change_type.to_string()),
