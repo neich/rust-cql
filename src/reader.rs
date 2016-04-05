@@ -60,10 +60,7 @@ pub trait CqlReader {
 
 impl<T: Read> CqlReader for T {
     fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
-        let len:i32 = match val_type {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length"),
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as i32,
-        }; 
+        let len:i32 = self.read_cql_bytes_length(val_type).unwrap();
 
         if len < 0 {
             Ok(vec![])
@@ -82,10 +79,7 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: i32) -> RCResult<i32> {
-        let len = match val_type {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length") as i32,
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading collection bytes length") as i32
-        };
+        let len = self.read_cql_bytes_length(val_type).unwrap();
         if len != -1 && len != length {
             Err(RCError::new(format!("Error reading bytes, length ({}) different than expected ({})", len, length), RCErrorType::ReadError))
         }  else {
@@ -171,10 +165,7 @@ impl<T: Read> CqlReader for T {
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
-        let len = match value_size {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
-        };
+        let len = self.read_cql_bytes_length(value_size).unwrap();
 
         let mut list: CQLList = vec![];
         for _ in 0 .. len {
@@ -250,10 +241,7 @@ impl<T: Read> CqlReader for T {
 
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading set size");
-        let len = match value_size {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
-        };
+        let len = self.read_cql_bytes_length(value_size).unwrap();
 
         let mut set: CQLSet = vec![];
         for _ in 0 .. len {
@@ -265,10 +253,7 @@ impl<T: Read> CqlReader for T {
 
     fn read_cql_map(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLMap>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading map size");
-        let len = match value_size {
-            CqlBytesSize::Cqli32 => try_bo!(self.read_i32::<BigEndian>(), "Error reading list length"),
-            CqlBytesSize::Cqli16 => try_bo!(self.read_i16::<BigEndian>(), "Error reading list length") as i32
-        };
+        let len = self.read_cql_bytes_length(value_size).unwrap();
 
         let mut map: CQLMap = vec![];
         for _ in 0 .. len {
