@@ -1,10 +1,11 @@
 use node::Node;
-
-// Methods cannot use 'Self'; &self or &mut self is OK
+use std::collections::BTreeMap;
+use std::net::{IpAddr,Ipv4Addr};
+// Trait methods cannot use 'Self'; &self or &mut self is OK
 // https://doc.rust-lang.org/error-index.html#E0038
 pub trait LoadBalancing {
 	//fn new() -> Self ;
-	fn select_node(&mut self,&Vec<Node>) -> usize;
+	fn select_node(&mut self,&BTreeMap<IpAddr,Node>) -> IpAddr;
 }
 
 #[derive(Clone)]
@@ -18,12 +19,12 @@ impl LoadBalancing for RoundRobin {
 	// 		index: 0
 	// 	}
 	// }
-    fn select_node(&mut self,v: &Vec<Node>) -> usize{
+    fn select_node(&mut self,map: &BTreeMap<IpAddr,Node>) -> IpAddr{
     	self.index = self.index + 1;
-    	if self.index==v.len(){
+    	if self.index == map.len(){
     		self.index = 0;
     	}
-    	self.index
+    	map.iter().nth(self.index).unwrap().0.clone()
     }
 }
 
@@ -38,15 +39,14 @@ impl LoadBalancing for LatencyAware {
 	// 	}
 	// }
 
-    fn select_node(&mut self,v: &Vec<Node>) -> usize{
+    fn select_node(&mut self,map: &BTreeMap<IpAddr,Node>) -> IpAddr{
     	let mut latency = 1;
-    	let mut index = 0;
-    	for node in v{
+    	let ip = IpAddr::V4(Ipv4Addr::new(0,0,0,0));
+    	for (ip,node) in map{
     		if node.get_latency() < latency{
     			latency = node.get_latency();
     		}
-    		index = index +1;
     	}
-    	index
+    	ip
     }
 }
