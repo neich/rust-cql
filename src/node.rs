@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::error::Error;
 use std::thread;
 use std::sync::mpsc::channel;
-use std::rc::{Rc,Weak};
+use std::sync::Arc;
 
 use def::*;
 use def::OpcodeRequest::*;
@@ -20,22 +20,22 @@ use connection::CqlMsg;
 use connection_pool::ConnectionPool;
 
 pub struct Node {
-    channel_pool: Weak<ChannelPool>, //Set of channels
+    channel_pool: Arc<ChannelPool>, //Set of channels
     pub version: u8,
     address: SocketAddr
 }
 
 impl Node{
     
-    pub fn new(address: SocketAddr) -> Node {
+    pub fn new(address: SocketAddr,channel_pool: Arc<ChannelPool>) -> Node {
         Node{
-            channel_pool: Rc::downgrade(&Rc::new(ChannelPool::new())),
+            channel_pool: channel_pool,
             version: CQL_MAX_SUPPORTED_VERSION,
             address: address
         }
     }
     
-    pub fn set_channel_pool(&mut self,channel_pool: Weak<ChannelPool>){
+    pub fn set_channel_pool(&mut self,channel_pool: Arc<ChannelPool>){
         /*
         match self.channel_pool {
             Some(c) =>  panic!("Channel pool can only be set once"),
@@ -45,12 +45,14 @@ impl Node{
         self.channel_pool = channel_pool;
     }
 
+    /*
     pub fn get_channel_pool(&self)-> Rc<ChannelPool>{
         match self.channel_pool.upgrade() {
             Some(ch) => ch ,
             None     => panic!("Channel pool is None"),
         }
     }
+    */
     //pub fn start(&mut self){
     //    self.run_event_loop();
     //}
@@ -133,7 +135,7 @@ impl Node{
 
     fn send_message(&self,request: CqlRequest) -> CassFuture{
         let (tx, future) = Future::<RCResult<CqlResponse>, ()>::pair();
-        match self.get_channel_pool().find_available_channel(){
+        match self.channel_pool.find_available_channel(){
             Ok(channel) => {
                 channel.send(CqlMsg::Request{
                                 request: request,
@@ -175,7 +177,7 @@ impl Node{
             opcode: OpcodeStartup,
             body: RequestStartup(body),
         };
-        match self.get_channel_pool().find_available_channel(){
+        match self.channel_pool.find_available_channel(){
             Ok(channel) => {
                 channel.send(CqlMsg::Connect{
                                 request: msg_startup,
@@ -187,6 +189,10 @@ impl Node{
             },
         }
         future
+    }
+
+    pub fn get_sock_addr(&self) -> SocketAddr{
+        self.address
     }
 }
    
