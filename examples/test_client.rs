@@ -1,9 +1,11 @@
 extern crate cql;
 extern crate eventual;
 extern crate mio;
+extern crate time;
 
 use cql::*;
 use std::borrow::Cow;
+use time::Duration;
 use std::io::Write;
 use std::thread;
 use eventual::*;
@@ -75,6 +77,6 @@ fn test_client() {
 
     // A long sleep because I'm trying to see if Cassandra sends 
     // any event message after a node change his status to up.
-    thread::sleep_ms(600000);
+    thread::sleep_ms(Duration::minutes(10).num_milliseconds() as u32);
 
 }
