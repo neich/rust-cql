@@ -32,51 +32,21 @@ pub struct Connection {
     pendings: Vec<CqlMsg>,
     // CQL version v1, v2 or v3
     version: u8,
-    //Temporal bool
-    pub register: bool 
+    // Channel to EventHandler
+    event_handler: Sender<CqlEvent>
 }
 
-pub enum CqlMsg{
-    Request{
-        request: CqlRequest,
-        tx: Complete<RCResult<CqlResponse>,()>,
-        address: SocketAddr
-    },
-    Connect{
-        request: CqlRequest,
-        tx: Complete<RCResult<CqlResponse>,()>,
-        address: SocketAddr
-    },
-    Shutdown
-}
-
-impl CqlMsg{
-    pub fn get_ip(&self) -> IpAddr
-    {
-        match self{
-            &CqlMsg::Request{ref request,ref tx,ref address} => {
-                address.ip().clone()
-            }
-            &CqlMsg::Connect{ref request,ref tx,ref address} => {
-                address.ip().clone()
-            }
-            _ =>{
-                panic!("Invalid type for get_ip");
-            }
-        }
-    }
-}
 
 impl Connection {
 
-    pub fn new(socket:TcpStream,version: u8)-> Connection{
+    pub fn new(socket:TcpStream,version: u8,event_handler: Sender<CqlEvent>)-> Connection{
         Connection {
             socket: socket,
             token: Token(1),
             response: CassResponse::new(),
             pendings: Vec::new(),
             version: version,
-            register: false
+            event_handler: event_handler
         }
     }
 
@@ -173,7 +143,6 @@ impl Connection {
         println!("Registering socket ip: {:?} ",self.socket.peer_addr().ok().expect("Couldn't unwrap ip").ip());
         event_loop.reregister(&self.socket, self.token, events,  mio::PollOpt::oneshot())
                   .ok().expect("Couldn't reregister connection");
-        println!("Line 472");
     }
     
     pub fn register(&self, event_loop: &mut EventLoop<ConnectionPool>,events : EventSet) {
@@ -274,8 +243,21 @@ impl Connection {
 
     pub fn handle_response(&mut self,response: RCResult<CqlResponse>, event_loop: &mut EventLoop<ConnectionPool>, is_event : bool ){
         if is_event {
-            println!("It seems we've got an event!")
+            println!("It seems we've got an event!");
             //Do event stuff
+            match response {
+                Ok(event) => {
+                    match event.body {
+                        ResponseEvent(cql_event) =>{
+                            self.event_handler.send(cql_event);
+                        },
+                        _ =>{
+                            println!("Oops! The event wasn't an event at all..");
+                        }
+                    }
+                },
+                RCError => (),
+            }
         }
         else{
             // Completes the future with a CqlResponse
@@ -305,7 +287,7 @@ impl Connection {
     }
 }
 
-pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>,event_loop: &mut EventLoop<ConnectionPool>) -> RCResult<Connection> {
+pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>,event_loop: &mut EventLoop<ConnectionPool>,event_handler: Sender<CqlEvent>) -> RCResult<Connection> {
 
     let mut version = CQL_MAX_SUPPORTED_VERSION;
     println!("Connection::connect");
@@ -315,8 +297,7 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>,event_loop: &mut E
         return Err(RCError::new(format!("Failed to connect to server at {}", address), ConnectionError));
     }
     let mut socket = res.ok().expect("Failed to unwrap the socket");
-    let mut conn = Connection::new(socket,version);
-    conn.register = true;   //test
+    let mut conn = Connection::new(socket,version,event_handler);
     // Once a connection is created we have to register it
     // then we can later 'reregister' if necessary
     conn.register(event_loop,EventSet::writable());
@@ -352,7 +333,7 @@ impl CassResponse {
     pub fn read_cql_response(&self,version: u8) -> (RCResult<CqlResponse>,bool){
         println!("Connection::CassResponse::read_cql_response");
         let bytes_buf = self.read_buf().bytes();   
-        println!("CqlResponseBytes := {:?}",to_hex_string(&bytes_buf.to_vec()));
+        //println!("CqlResponseBytes := {:?}",to_hex_string(&bytes_buf.to_vec()));
         // By now, just copy it to avoid borrowing troubles
         let mut response : ByteBuf = ByteBuf::from_slice(bytes_buf);
         let rc_result = response.read_cql_response(version);
@@ -369,4 +350,35 @@ impl CassResponse {
         (Ok(cql_response),is_event)
     }
 
+}
+
+pub enum CqlMsg{
+    Request{
+        request: CqlRequest,
+        tx: Complete<RCResult<CqlResponse>,()>,
+        address: SocketAddr
+    },
+    Connect{
+        request: CqlRequest,
+        tx: Complete<RCResult<CqlResponse>,()>,
+        address: SocketAddr
+    },
+    Shutdown
+}
+
+impl CqlMsg{
+    pub fn get_ip(&self) -> IpAddr
+    {
+        match self{
+            &CqlMsg::Request{ref request,ref tx,ref address} => {
+                address.ip().clone()
+            }
+            &CqlMsg::Connect{ref request,ref tx,ref address} => {
+                address.ip().clone()
+            }
+            _ =>{
+                panic!("Invalid type for get_ip");
+            }
+        }
+    }
 }

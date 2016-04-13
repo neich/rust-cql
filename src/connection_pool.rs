@@ -11,7 +11,7 @@ use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::collections::BTreeMap;
 use std::borrow::Cow;
 use std::error::Error;
-use def::{RCResult,RCError};
+use def::{RCResult,RCError,CqlEvent};
 use def::RCErrorType::*;
 use connection::{Connection,CqlMsg,connect};
 
@@ -21,15 +21,17 @@ use connection::{Connection,CqlMsg,connect};
 pub struct ConnectionPool {
     token_by_ip: BTreeMap<IpAddr,Token>,
     connections: Slab<Connection>,
-    pending_startup: Vec<Token>
+    pending_startup: Vec<Token>,
+    event_handler: Sender<CqlEvent>
 }
 
 impl ConnectionPool {
-    pub fn new() -> ConnectionPool {
+    pub fn new(event_handler: Sender<CqlEvent>) -> ConnectionPool {
         ConnectionPool {
             token_by_ip: BTreeMap::new(),
             connections: Slab::new_starting_at(Token(1), 128),
-            pending_startup: Vec::new()
+            pending_startup: Vec::new(),
+            event_handler: event_handler
         }
     }
     
@@ -46,7 +48,10 @@ impl ConnectionPool {
     
     fn create_connection(&mut self,event_loop: &mut EventLoop<ConnectionPool>,address:&IpAddr) -> RCResult<Token>{
         println!("[ConnectionPool::create_connection]");
-        let mut conn = try_rc!(connect(SocketAddr::new(address.clone(),9042),None,event_loop),"");
+        let mut conn = try_rc!(connect(SocketAddr::new(address.clone(),9042),
+                                None,
+                                event_loop,
+                                self.event_handler.clone()),"");
         let token = try_rc!(self.add_connection(address.clone(),conn),"");
         
         self.pending_startup.push(token);
