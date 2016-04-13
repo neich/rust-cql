@@ -216,7 +216,7 @@ pub enum TopologyChangeType{
     NewNode,
     RemovedNode,
     MovedNode,
-    Unknown
+    UnknownChange
 }
 
 impl TopologyChangeType{
@@ -225,7 +225,7 @@ impl TopologyChangeType{
             TOPOLOGY_CHANGE_NEW_NODE         => TopologyChangeType::NewNode,
             TOPOLOGY_CHANGE_REMOVED_NODE     => TopologyChangeType::RemovedNode,
             TOPOLOGY_CHANGE_MOVED_NODE       => TopologyChangeType::MovedNode,
-            _ => TopologyChangeType::Unknown
+            _ => TopologyChangeType::UnknownChange
         }
     }
 }
@@ -234,7 +234,7 @@ impl TopologyChangeType{
 pub enum StatusChangeType{
     Up,
     Down,
-    Unknown
+    UnknownStatus
 }
 
 impl StatusChangeType{
@@ -242,7 +242,7 @@ impl StatusChangeType{
         match string {
             STATUS_CHANGE_UP      => StatusChangeType::Up,
             STATUS_CHANGE_DOWN     => StatusChangeType::Down,
-            _ => StatusChangeType::Unknown
+            _ => StatusChangeType::UnknownStatus
         }
     }
 }
@@ -252,7 +252,7 @@ pub enum SchemaChangeType{
     Created,
     Updated,
     Dropped,
-    Unknown
+    UnknownSchema
 }
 
 impl SchemaChangeType{
@@ -261,7 +261,7 @@ impl SchemaChangeType{
             SCHEMA_CHANGE_TYPE_CREATED     => SchemaChangeType::Created,
             SCHEMA_CHANGE_TYPE_UPDATED     => SchemaChangeType::Updated,
             SCHEMA_CHANGE_TYPE_DROPPED     => SchemaChangeType::Dropped,
-            _ => SchemaChangeType::Unknown
+            _ => SchemaChangeType::UnknownSchema
         }
     }
 }
@@ -282,7 +282,8 @@ pub enum RCErrorType {
     NoDataError,
     GenericError,
     IOError,
-    EventLoopError
+    EventLoopError,
+    ClusterError
 }
 
 #[derive(Debug)]
