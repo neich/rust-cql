@@ -37,7 +37,8 @@ pub trait CqlReader {
     fn read_cql_blob(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Vec<u8>>>;
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>>;
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>>;
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>>;
+    fn read_cql_inet_with_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>>;
+    fn read_cql_inet_no_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>>;
     fn read_cql_event(&mut self, val_type: CqlBytesSize) -> RCResult<CqlEvent>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
@@ -72,10 +73,12 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32> {
+
         match val_type {
             CqlBytesSize::Cqli32 => Ok(try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length")),
             CqlBytesSize::Cqli16 => Ok(try_bo!(self.read_i16::<BigEndian>(), "Error reading bytes length") as i32),
             CqlBytesSize::Cqli8  => {
+                println!("Line 80");
                 let size = 1;
                 let mut buf = Vec::with_capacity(size);
                 try_io!(std::io::copy(&mut self.take(size as u64), &mut buf), "Error at read_exact");
@@ -151,7 +154,7 @@ impl<T: Read> CqlReader for T {
         }      
     }
 
-    fn read_cql_inet(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>> {
+    fn read_cql_inet_with_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>> {
         let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
         let ip =
             if vec.len() == 0 {
@@ -179,6 +182,24 @@ impl<T: Read> CqlReader for T {
         
     }
 
+    fn read_cql_inet_no_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>> {
+        let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
+        if vec.len() == 0 {
+            Ok(None)
+        } else if vec.len() == 4 {
+            Ok(Some(IpAddr::V4(Ipv4Addr::new(vec[0], vec[1], vec[2], vec[3]))))
+        } else {
+            Ok(Some(IpAddr::V6(Ipv6Addr::new(vec[1] as u16 + ((vec[0] as u16) << 8),
+              vec[3] as u16 + ((vec[2] as u16) << 8),
+              vec[5] as u16 + ((vec[4] as u16) << 8),
+              vec[7] as u16 + ((vec[6] as u16) << 8),
+              vec[9] as u16 + ((vec[8] as u16) << 8),
+              vec[11] as u16 + ((vec[10] as u16) << 8),
+              vec[13] as u16 + ((vec[12] as u16) << 8),
+              vec[15] as u16 + ((vec[14] as u16) << 8)))))     
+        }
+    }
+
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
         let len = self.read_cql_bytes_length(value_size).unwrap();
@@ -203,20 +224,18 @@ impl<T: Read> CqlReader for T {
                 let msg = error_msg.to_string() + "CqlEventType::TopologyChange : "; 
                 let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
                                   .unwrap();
-                let address = try_rc!(self.read_cql_inet(CqlBytesSize::Cqli8), msg+" inet (address)");
+                let address = try_rc!(self.read_cql_inet_with_port(CqlBytesSize::Cqli8), msg+" inet (address)");
                 
                 Ok(CqlEvent::TopologyChange(TopologyChangeType::from_str(
                                             &change_type.to_string()),
                                             address.unwrap()))
             },
             CqlEventType::StatusChange =>{
-                println!("Line 206");
                 let msg = error_msg.to_string() + "CqlEventType::StatusChange : "; 
                 let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
                                   .unwrap();
                                   println!("Line 210");
-                let address = try_rc!(self.read_cql_inet(CqlBytesSize::Cqli8), msg+" inet (address)");
-                println!("Line 212");
+                let address = try_rc!(self.read_cql_inet_with_port(CqlBytesSize::Cqli8), msg+" inet (address)");
                 Ok(CqlEvent::StatusChange(  StatusChangeType::from_str(
                                             &change_type.to_string()),
                                             address.unwrap()))
@@ -346,6 +365,7 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_value(&mut self, col_meta: &CqlColMetadata, collection_size: CqlBytesSize) -> RCResult<CqlValue> {
+        println!("{:?}",col_meta.col_type);
         match col_meta.col_type {
             ColumnList => { Ok(CqlList(try_rc!(self.read_cql_list(col_meta, collection_size), "Error reading column value (list)"))) },
             ColumnMap => { Ok(CqlMap(try_rc!(self.read_cql_map(col_meta, collection_size), "Error reading column value (map)"))) },
@@ -386,7 +406,7 @@ impl<T: Read> CqlReader for T {
                 Ok(CqlUnknown)
             },
             ColumnTimeUuid => Ok(CqlTimeUuid(try_rc!(self.read_cql_uuid(val_type), "Error reading column value (timeuuid)"))),
-            ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet(val_type), "Error reading column value (inet)"))),
+            ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet_no_port(val_type), "Error reading column value (inet)"))),
             CqlValueType::ColumnUnknown => panic!("Unknown column type !"),
             _ => Err(RCError::new("Trying to read a non-single value type", ReadError))
         }
@@ -504,9 +524,7 @@ impl<T: Read> CqlReader for T {
         //
 
         let mut reader = std::io::BufReader::new(Cursor::new(body_data));
-
         let opcode = opcode_response(header.opcode);
-
         let body = match opcode {
             OpcodeReady => ResponseReady,
             OpcodeAuthenticate => {
@@ -525,7 +543,8 @@ impl<T: Read> CqlReader for T {
                     },
                     Some(KindRows) => {
                         let collection_size = if version >= 3 { CqlBytesSize::Cqli32 } else { CqlBytesSize::Cqli16 };
-                        ResultRows(try_rc!(reader.read_cql_rows(collection_size), "Error reading result Rows"))
+                        let temp = ResultRows(try_rc!(reader.read_cql_rows(collection_size), "Error reading result Rows"));
+                        temp
                     },
                     Some(KindSetKeyspace) => {
                         let msg = try_rc_noption!(reader.read_cql_str(CqlBytesSize::Cqli16), "Error reading result Keyspace");

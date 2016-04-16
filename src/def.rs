@@ -4,7 +4,7 @@ extern crate uuid;
 extern crate mio;
 extern crate eventual;
 
-use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr};
+use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,IpAddr};
 use self::uuid::Uuid;
 use std::borrow::Cow;
 use std::ops::Deref;
@@ -326,11 +326,6 @@ impl std::fmt::Display for RCError {
 
 pub type RCResult<T> = Result<T, RCError>;
 
-#[derive(Debug, Clone)]
-pub enum IpAddress {
-    Ipv4(Ipv4Addr),
-    Ipv6(Ipv6Addr)
-}
 
 #[derive(Debug, Clone)]
 pub struct CqlStringMap {
@@ -394,7 +389,7 @@ pub enum CqlValue {
     CqlDecimal(Option<num::BigInt>),
     CqlDouble(Option<f64>),
     CqlFloat(Option<f32>),
-    CqlInet(Option<SocketAddr>),
+    CqlInet(Option<IpAddr>),
     CqlInt(Option<i32>),
     CqlList(Option<CQLList>),
     CqlMap(Option<CQLMap>),
