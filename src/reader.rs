@@ -143,10 +143,6 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>> {
-        let len = try_rc_length!(self.read_cql_bytes_length(val_type), "Error reading uuid length");
-        if len != 16 {
-            return Err(RCError::new("Invalid uuid length", RCErrorType::ReadError))  
-        }
         let vec_u8 = try_rc!(self.read_cql_bytes(val_type), "Error reading uuid data");
         match Uuid::from_bytes(&vec_u8) {
             Some(u) => Ok(Some(u)),
@@ -217,7 +213,6 @@ impl<T: Read> CqlReader for T {
         let event_type = try_rc!(self.read_cql_str(val_type), "Error reading event type (str)").unwrap();
         
         let event_type = CqlEventType::from_str(&event_type.to_string());
-        println!("{:?}", event_type);
         let error_msg = "Error reading ";
         match event_type {
             CqlEventType::TopologyChange =>{
@@ -234,7 +229,6 @@ impl<T: Read> CqlReader for T {
                 let msg = error_msg.to_string() + "CqlEventType::StatusChange : "; 
                 let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
                                   .unwrap();
-                                  println!("Line 210");
                 let address = try_rc!(self.read_cql_inet_with_port(CqlBytesSize::Cqli8), msg+" inet (address)");
                 Ok(CqlEvent::StatusChange(  StatusChangeType::from_str(
                                             &change_type.to_string()),
@@ -365,7 +359,6 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_value(&mut self, col_meta: &CqlColMetadata, collection_size: CqlBytesSize) -> RCResult<CqlValue> {
-        println!("{:?}",col_meta.col_type);
         match col_meta.col_type {
             ColumnList => { Ok(CqlList(try_rc!(self.read_cql_list(col_meta, collection_size), "Error reading column value (list)"))) },
             ColumnMap => { Ok(CqlMap(try_rc!(self.read_cql_map(col_meta, collection_size), "Error reading column value (map)"))) },
@@ -576,7 +569,6 @@ impl<T: Read> CqlReader for T {
                 ResponseAuthSuccess(try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading ResponseAuthSuccess"))
             }
             OpcodeEvent => {
-                println!("Reader.read_cql_response -> OpcodeEvent");
                 ResponseEvent(try_rc!(reader.read_cql_event(CqlBytesSize::Cqli16), "Error reading ResponseEvent"))
             }
             _ => {
