@@ -84,6 +84,25 @@ macro_rules! try_rc_noption(
     }
 );
 
+#[macro_export]
+macro_rules! try_unwrap(
+    ($call: expr) => {
+        match $call {
+            Ok(val) => val,
+            Err(err) => return Err($crate::def::RCError::new(format!("{:?}", err), $crate::def::RCErrorType::IOError))
+        };
+    }
+);
+
+#[macro_export]
+macro_rules! try_unwrap_op(
+    ($call: expr,$msg: expr) => {
+        match $call {
+            Some(val) => val,
+            None => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, ""), $crate::def::RCErrorType::IOError))
+        };
+    }
+);
 
 macro_rules! CowStr_tuple_void(
     () => {
