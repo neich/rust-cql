@@ -11,7 +11,7 @@ use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::collections::BTreeMap;
 use std::borrow::Cow;
 use std::error::Error;
-use def::{RCResult,RCError,CqlEvent};
+use def::{RCResult,RCError,CqlEvent,RCErrorType};
 use def::RCErrorType::*;
 use connection::{Connection,CqlMsg,connect};
 
@@ -117,14 +117,15 @@ impl mio::Handler for ConnectionPool {
     // loop. Only change state in case it is waiting
     fn notify(&mut self, event_loop: &mut EventLoop<ConnectionPool>, msg: CqlMsg) {
         println!("[ConnectionPool::notify]");
+        let ip = &msg.get_ip();
+        //let complete = msg.get_complete();
         match msg {
             CqlMsg::Request{..} => {
-                let mut result = self.get_connection_with_ip(event_loop,&msg.get_ip());  
+                let mut result = self.get_connection_with_ip(event_loop,ip);  
                 // Here is where we should do create a new connection if it doesn't exists.
                 // Connect, then send_startup with the queue_message
                 match result {
                     Ok(conn) =>{
-                        // Ineficient, consider using a LinkedList
                         conn.insert_request(msg);
                         conn.reregister(event_loop,EventSet::writable());
                     },
@@ -135,15 +136,14 @@ impl mio::Handler for ConnectionPool {
                 }
             },
             CqlMsg::Connect{..} => {
-                let mut result = self.create_connection(event_loop,&msg.get_ip());
+                let mut result = self.create_connection(event_loop,ip);
                 match result {
                     Ok(token) =>{
-                        // Ineficient, consider using a LinkedList
-                        let conn = self.find_connection_by_ip(&msg.get_ip()).unwrap();
+                        let conn = self.find_connection_by_ip(ip).unwrap();
                         conn.insert_request(msg);
                     },
-                    Err(err) =>{
-                        // Complete the future with the error
+                    Err(ref err) =>{
+                        //complete.complete((Err(RCError::new(format!("{} -> {}", "", ""), RCErrorType::IOError))));
                     }
                 }
             },
