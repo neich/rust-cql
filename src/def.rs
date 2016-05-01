@@ -403,7 +403,7 @@ pub enum CqlValue {
     CqlUnknown,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct CqlRow {
     pub cols: Vec<CqlValue>,
 }
@@ -489,7 +489,8 @@ pub type CassFuture = Future<RCResult<CqlResponse>,()>;
 
 
 pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"];
-pub static CQL_MAX_SUPPORTED_VERSION:u8 = 0x03;
+pub static CQL_MAX_SUPPORTED_VERSION: u8 = 0x03;
+pub static CQL_DEFAULT_PORT: u16 = 9042;
 
 pub fn to_hex_string(bytes: &Vec<u8>) -> String {
   let strs: Vec<String> = bytes.iter()
