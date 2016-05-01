@@ -143,7 +143,7 @@ impl mio::Handler for ConnectionPool {
                         conn.insert_request(msg);
                     },
                     Err(ref err) =>{
-                        //complete.complete((Err(RCError::new(format!("{} -> {}", "", ""), RCErrorType::IOError))));
+                        msg.complete((Err(RCError::new(format!("{} -> {}", "", ""), RCErrorType::IOError))));
                     }
                 }
             },

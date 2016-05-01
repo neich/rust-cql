@@ -389,13 +389,16 @@ impl CqlMsg{
             }
         }
     }
-    pub fn complete(&mut self,result: RCResult<CqlResponse>) 
+
+    //Consume 'self' to complete the future,
+    //self won't be usable after this
+    pub fn complete(self,result: RCResult<CqlResponse>) 
     {
-        match *self {
-            CqlMsg::Request{ref request,ref mut tx,ref address} => {
-               tx.copy().complete(result);
+        match self {
+            CqlMsg::Request{request,tx,address} => {
+               tx.complete(result);
             }
-            CqlMsg::Connect{ref request,ref mut tx,ref address} => {
+            CqlMsg::Connect{request,tx,address} => {
                tx.complete(result);
             }
             _ =>{
