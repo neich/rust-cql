@@ -5,12 +5,13 @@ use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::error::Error;
 use std::thread;
 use def::mio::{EventLoop, Sender, Handler};
-use def::{RCResult,CqlResponse,CassFuture,CqlEvent,RCErrorType,
-		 Consistency,RCError,TopologyChangeType};
+use def::*;
 use def::eventual::Async;
 use def::RCErrorType::*;
 use def::TopologyChangeType::*;
 use def::StatusChangeType::*;
+use def::CqlResponseBody::*;
+use def::CqlValue::*;
 use node::{Node,ChannelPool};
 use connection_pool::ConnectionPool;
 use std::convert::AsRef;
@@ -91,26 +92,81 @@ impl Cluster {
 							.len() == 0
 	}
 
+	fn add_node(&self,ip: IpAddr) -> RCResult<CqlResponse>{
+		let address = SocketAddr::new(ip,CQL_DEFAULT_PORT);
+		let mut node = Node::new(address,self.channel_pool.clone());
+		node.set_channel_pool(self.channel_pool.clone());
+
+		//To-do: handle error
+		let response = {
+			try_unwrap!(node.connect().await())
+		};
+
+		match response {
+			Ok(_) => {
+				try_unwrap!(self.available_nodes.write())
+							.insert(address.ip(),node);
+			}
+			Err(_) =>{
+				try_unwrap!(self.unavailable_nodes.write())
+							.insert(address.ip(),node);
+			}
+		}
+		response
+	}
+
+	//This operation blocks
 	pub fn connect_cluster(&mut self,address: SocketAddr) -> RCResult<CqlResponse>{
 		if self.are_available_nodes(){
 			self.current_node = address.ip();
-			let mut node = Node::new(address,self.channel_pool.clone());
-			node.set_channel_pool(self.channel_pool.clone());
-			{
-			self.available_nodes.write()
-								.unwrap()
-								.insert(address.ip(),node);
+			let connect_response = self.add_node(self.current_node);
+			match connect_response{
+				Ok(_) => {
+					let peers = try_unwrap!(try_unwrap!(self.get_peers().await()));
+					//println!("Peers: {:?}",peers);
+					//TODO: handle errors with a macro
+					let ip_nodes = try_unwrap!(self.parse_nodes(peers));
+					self.create_nodes(ip_nodes);
+				},
+				Err(_) =>{
+					()
+				}
 			}
-			//To-do: handle error
-			let map = self.available_nodes
-						   .read()
-						   .unwrap();			   
-			let node = map.get(&self.current_node)
-						   .unwrap();		   
-			node.connect().await().unwrap()
+			return connect_response;
 		}
 		else{
-			Err(RCError::new("Already connected to cluster", ClusterError)) 
+			return Err(RCError::new("Already connected to cluster", ClusterError)) 
+		}
+	}
+
+	fn parse_nodes(&self,response: CqlResponse) -> RCResult<Vec<IpAddr>>{
+		let mut nodes = Vec::new();
+		match response.body {
+			ResultRows(cql_rows) => {
+				if cql_rows.rows.len() > 0 {
+					let rows = cql_rows.rows.clone();
+					for row in rows {
+						println!("Col: {:?}",row);
+						match *row.cols.get(0).unwrap() {
+							CqlInet(Some(ip)) => {
+								nodes.push(ip);
+							},
+							_ => return Err(RCError::new("Error CqlResponse contains no rows", ReadError)),
+						}
+					}
+					Ok(nodes)
+				}
+				else{
+					Err(RCError::new("Error CqlResponse contains no rows", ReadError))
+				}
+			},
+			_ => Err(RCError::new("Error CqlResponse type must be ResultRows", ClusterError)),
+		}
+	}
+
+	fn create_nodes(&mut self,ips: Vec<IpAddr>){
+		for ip in ips {
+		    self.add_node(ip);
 		}
 	}
 
@@ -152,6 +208,31 @@ impl Cluster {
 		node.send_register(Vec::new())
 	}
 
+	// This temporal until I return some type
+	pub fn show_cluster_information(&self){
+		let map_availables = 
+			self.available_nodes
+	   			.read()
+	   			.unwrap();
+	   	let map_unavailables = 
+	   		self.unavailable_nodes
+	   			.read()
+	   			.unwrap();
+		println!("--------------Available nodes-----------");
+		println!("Address");
+		for node in map_availables.iter() {
+			print!("{:?}\t",node.1.get_sock_addr());
+		}
+		println!("");
+		println!("----------------------------------------");
+
+		println!("--------------Unavailable nodes----------");
+		println!("Address");
+		for node in map_unavailables.iter() {
+			print!("{:?}\t",node.1.get_sock_addr());
+		}
+		println!("----------------------------------------");
+	}
 }
 
 struct EventHandler{
@@ -235,10 +316,10 @@ impl Handler for EventHandler {
 					UnknownStatus => ()
 				}
 			},
-			CqlEvent::SchemaChange(..) =>{
+			CqlEvent::SchemaChange(change_type,socket_addr) =>{
 				println!("Schema changes are not handled yet.");
 			},
-			CqlEvent::UnknownEvent (..)=> {
+			CqlEvent::UnknownEvent=> {
 				println!("We've got an UnkownEvent");
 			}
 		}
