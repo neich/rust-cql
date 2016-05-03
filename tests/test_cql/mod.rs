@@ -1,10 +1,30 @@
 extern crate std;
 extern crate eventual;
+extern crate cql;
 
 use std::borrow::Cow;
 use std::io::Write;
-use cql;
+use cql::*;
 use self::eventual::{Future,Async};
+
+#[macro_use]
+macro_rules! assert_response(
+    ($resp:expr) => (
+        if match $resp.opcode { cql::OpcodeResponse::OpcodeError => true, _ => false } {
+            panic!("Test failed at assertion: {}",
+                match $resp.body { cql::CqlResponseBody::ResponseError(_, message) => message, _ => Cow::Borrowed("Ooops!")});
+        }
+    );
+);
+
+macro_rules! try_test(
+    ($call: expr, $msg: expr) => {
+        match $call {
+            Ok(val) => val,
+            Err(ref err) => panic!("Test failed at library call: {}", err.description())
+        };
+    }
+);
 
 pub fn to_hex_string(bytes: &Vec<u8>) -> String {
   let strs: Vec<String> = bytes.iter()
@@ -16,139 +36,57 @@ pub fn to_hex_string(bytes: &Vec<u8>) -> String {
 #[test]
 fn test() {
     println!("Connecting ...!");
-    println!("Connecting ...!");
-    let ip = "127.0.0.1";
+    let ip = "172.17.0.2";
     let port = "9042";
     let ip_port = ip.to_string()+":"+port;
-    let mut client = try_test!(cql::connect(ip_port.parse().ok().expect("Couldn't parse address"),None), "Error connecting to server at "+ip_port);
-    println!("Connected with CQL binary version v{}", client.version);
+    
+    let mut cluster = Cluster::new();
+    
+    let mut response = try_test!(cluster.connect_cluster(ip_port.parse().ok().expect("Couldn't parse address")),
+                                "Error connecting to cluster");
+    println!("Result: {:?} \n", response);
+    assert_response!(response);
 
     let mut q = "create keyspace if not exists rust with replication = {'class': 'SimpleStrategy', 'replication_factor':1}";
     println!("cql::Query: {}", q);
-    let mut response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating keyspace");
+    let mut response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating keyspace");
     assert_response!(response);
     println!("Result: {:?} \n", response);
 
-    q = "create table if not exists rust.test (id text primary key, f32 float, f64 double, i32 int, i64 bigint, b boolean, ip inet)";
+    q = "create table if not exists rust.test_types (
+                ascii_ ascii,
+                bigint_ bigint,
+                blob_ blob,
+                boolean_ boolean,
+                date_ date,
+                decimal_ decimal,
+                double_ double,
+                float_ float,
+                inet_ inet,
+                int_ int primary KEY,
+                smallint_ smallint,
+                text_ text,
+                time_ time,
+                timestamp_ timestamp,
+                timeuuid_ timeuuid,
+                tinyint_ tinyint,
+                uuid_ uuid,
+                varchar_ varchar,
+                varint_ varint
+                );";
+
     println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating table rust.test");
+    response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating table rust.test_types");
     assert_response!(response);
     println!("Result: {:?} \n", response);
 
-    q = "insert into rust.test (id, f32, f64, i32, i64, b, ip) values ('asdf', 1.2345, 3.14159, 47, 59, true, '127.0.0.1')";
+    q = "INSERT INTO rust.test_types
+        (int_, ascii_, bigint_, blob_, boolean_, date_, decimal_, double_, float_, inet_, smallint_, text_, time_, timestamp_, timeuuid_, tinyint_, uuid_, varchar_, varint_)
+        VALUES(0, 'asdf', 0, 0x00A1, false, toDate(now()), 1.0, 1.2345, 1.234567890123, '127.0.0.1', 13, 'asdf', toTime(now()), toTimestamp(now()), now(), 12, now(), 'qwerty', 27);";
     println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error inserting into table test");
+    response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error inserting into table test");
     assert_response!(response);
     println!("Result: {:?} \n", response);
 
-    q = "select * from rust.test";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
 
-    q = "insert into rust.test (id, f32) values (?, ?)";
-    println!("Create prepared: {}", q);
-    let preps = try_test!(client.prepared_statement(q), "Error creating prepared statement");
-    println!("Created prepared with id = {}", to_hex_string(&preps.id));
-
-    println!("Execute prepared");
-    let params: &Vec<cql::CqlValue> = &vec![cql::CqlVarchar(Some(Cow::Borrowed("ttrwe"))), cql::CqlFloat(Some(15.1617))];
-    response = try_test!(client.exec_prepared(&preps.id, params, cql::Consistency::One).await().unwrap(), "Error executing prepared statement");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "select * from rust.test";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    println!("Execute batch");
-    let params2: Vec<cql::CqlValue> = vec![cql::CqlVarchar(Some(Cow::Borrowed("batch2"))), cql::CqlFloat(Some(666.65))];
-    let q_vec = vec![cql::QueryStr(Cow::Borrowed("insert into rust.test (id, f32) values ('batch1', 34.56)")),
-                     cql::QueryPrepared(preps.id, params2)];
-    response = try_test!(client.exec_batch(cql::BatchType::Logged, q_vec, cql::Consistency::One).await().unwrap(), "Error executing batch cql::Query");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "select * from rust.test";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "create table if not exists rust.test2 (id text primary key, l list<int>, m map<int, text>, s set<float>)";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating table test2");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "insert into rust.test2 (id, l, m, s) values ('asdf', [1,2,3,4,5], {0: 'aa', 1: 'bbb', 3: 'cccc'}, {1.234, 2.345, 3.456, 4.567})";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error inserting into table test2");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "select * from rust.test2";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test2");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-}
-
-
-fn test_multiple_requests(n:u16){
-
-    println!("Connecting ...!");
-    let mut client = try_test!(cql::connect("127.0.0.1:9042".parse().ok().expect("Couldn't parse address"),None), "Error connecting to server at 127.0.0.1:9042");
-    println!("Connected with CQL binary version v{}", client.version);
-
-    let mut q = "create table if not exists rust.test (id text primary key, f32 float, f64 double, i32 int, i64 bigint, b boolean, ip inet)";
-    println!("cql::Query: {}", q);
-    let mut response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating table rust.test");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "insert into rust.test (id, f32, f64, i32, i64, b, ip) values ('asdf', 1.2345, 3.14159, 47, 59, true, '127.0.0.1')";
-    println!("cql::Query: {}", q);
-    response = try_test!(client.exec_query(q, cql::Consistency::One).await().unwrap(), "Error inserting into table test");
-    assert_response!(response);
-    println!("Result: {:?} \n", response);
-
-    q = "select * from rust.test";
-    println!("cql::Query: {}", q);
-    let mut future_vec: Vec<cql::CassFuture> = Vec::new();
-    
-    for _ in 1..n{
-        let response = client.exec_query(q, cql::Consistency::One);
-        future_vec.push(response);
-    }
-    
-    for future in future_vec{
-        future.receive(|data| {
-            let response = try_test!(data.unwrap(), "Error selecting table test");
-            assert_response!(response);
-            println!("Result: {:?} \n", response);
-        });
-    }
-}
-
-// Default notify capacity (nc) is 4096 (n). If n > nc
-// then another thread should panic. Test will pass
-// anyway since main thread doesn't panic. We should
-// catch thread panic which is a nightly feature (1.7).
-
-// This is test is NOT multithreaded because the event loop 
-// only uses one thread. Stream = 1 in every cql request.
-
-#[test]
-fn test_max_requests(){
-    test_multiple_requests(4096);
-}
-
-#[test]
-#[should_panic]
-fn test_more_requests(){
-    test_multiple_requests(10000);
 }
