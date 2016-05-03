@@ -61,10 +61,12 @@ impl ConnectionPool {
     fn add_connection(&mut self, address:IpAddr,connection: Connection)-> RCResult<Token>{
         println!("[ConnectionPool::add_connection]");
         let result = self.connections.insert(connection);
+
         match result{
             Ok(token) => {
                 {
                 let conn = self.find_connection_by_token(token).ok().expect("Couldn't unwrap the connection");
+                println!("Setting token {:?}",token);
                 conn.set_token(token);
                 }
                 self.token_by_ip.insert(address,token);
@@ -122,7 +124,7 @@ impl mio::Handler for ConnectionPool {
         match msg {
             CqlMsg::Request{..} => {
                 let mut result = self.get_connection_with_ip(event_loop,ip);  
-                // Here is where we should do create a new connection if it doesn't exists.
+                // Here is where we should do create a new connection if it doesn't exist.
                 // Connect, then send_startup with the queue_message
                 match result {
                     Ok(conn) =>{
@@ -141,9 +143,10 @@ impl mio::Handler for ConnectionPool {
                     Ok(token) =>{
                         let conn = self.find_connection_by_ip(ip).unwrap();
                         conn.insert_request(msg);
+                        conn.reregister(event_loop,EventSet::writable());
                     },
                     Err(ref err) =>{
-                        msg.complete((Err(RCError::new(format!("{} -> {}", "", ""), RCErrorType::IOError))));
+                        msg.complete((Err(RCError::new("Couldn't connect to host", RCErrorType::ConnectionError))));
                     }
                 }
             },

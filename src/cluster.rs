@@ -55,9 +55,9 @@ impl Cluster {
         let mut event_handler = EventHandler::new(availables.clone(),unavailables.clone(),arc_channel.clone());
 
         // Only keep the event loop channel
-        thread::spawn(move||{
-                event_loop.run(&mut event_handler).ok().expect("Failed to start event loop");
-            });
+        thread::Builder::new().name("event_handler".to_string()).spawn(move || {
+        	event_loop.run(&mut event_handler).ok().expect("Failed to start event loop");
+		});
 
         
 
@@ -69,9 +69,9 @@ impl Cluster {
 
         println!("Starting event loop...");
         // Only keep the event loop channel
-        thread::spawn(move||{
+        thread::Builder::new().name("connection_pool".to_string()).spawn(move || {
                 event_loop_conn_pool.run(&mut connection_pool).ok().expect("Failed to start event loop");
-            });
+        });
 
 		Cluster{
 			available_nodes: availables.clone(),
@@ -122,9 +122,11 @@ impl Cluster {
 			let connect_response = self.add_node(self.current_node);
 			match connect_response{
 				Ok(_) => {
+					//Register the connection to get Events from Cassandra
+					try_unwrap!(try_unwrap!(self.register().await()));
+
+					//Get the currrent nodes from a system query
 					let peers = try_unwrap!(try_unwrap!(self.get_peers().await()));
-					//println!("Peers: {:?}",peers);
-					//TODO: handle errors with a macro
 					let ip_nodes = try_unwrap!(self.parse_nodes(peers));
 					self.create_nodes(ip_nodes);
 				},
@@ -218,18 +220,18 @@ impl Cluster {
 	   		self.unavailable_nodes
 	   			.read()
 	   			.unwrap();
+	   	println!("EventHandler::show_cluster_information");
 		println!("--------------Available nodes-----------");
 		println!("Address");
 		for node in map_availables.iter() {
-			print!("{:?}\t",node.1.get_sock_addr());
+			println!("{:?}\t",node.0);
 		}
-		println!("");
 		println!("----------------------------------------");
 
-		println!("--------------Unavailable nodes----------");
+		println!("--------------Unavailable nodes---------");
 		println!("Address");
 		for node in map_unavailables.iter() {
-			print!("{:?}\t",node.1.get_sock_addr());
+			println!("{:?}\t",node.0);
 		}
 		println!("----------------------------------------");
 	}
@@ -249,6 +251,30 @@ impl EventHandler{
 			channel_pool: channel_pool
 		}
 	}
+	pub fn show_cluster_information(&self){
+		let map_availables = 
+			self.available_nodes
+	   			.read()
+	   			.unwrap();
+	   	let map_unavailables = 
+	   		self.unavailable_nodes
+	   			.read()
+	   			.unwrap();
+	   	println!("EventHandler::show_cluster_information");
+		println!("--------------Available nodes-----------");
+		println!("Address");
+		for node in map_availables.iter() {
+			println!("{:?}\t",node.0);
+		}
+		println!("----------------------------------------");
+
+		println!("--------------Unavailable nodes---------");
+		println!("Address");
+		for node in map_unavailables.iter() {
+			println!("{:?}\t",node.0);
+		}
+		println!("----------------------------------------");
+	}
 }
 
 impl Handler for EventHandler {
@@ -257,27 +283,28 @@ impl Handler for EventHandler {
     type Message = CqlEvent; 
 
     fn notify(&mut self, event_loop: &mut EventLoop<EventHandler>, msg: CqlEvent) {
+    	println!("EventHandler::notify");
     	match msg {
     		CqlEvent::TopologyChange(change_type,socket_addr) =>{
     			match change_type{
     				NewNode =>{
     					let mut map = self.available_nodes
 					   		.write()
-					   		.unwrap();
+					   		.ok().expect("Can't write in available_nodes");
     					map.insert(socket_addr.ip(),
     							Node::new(socket_addr,self.channel_pool.clone()));
     				},
     				RemovedNode =>{
     					let mut map = self.available_nodes
 					   		.write()
-					   		.unwrap();
+					   		.ok().expect("Can't write in available_nodes");
     					map.remove(&socket_addr.ip());
     				},
     				MovedNode =>{
     					//Not sure about this.
     					let mut map = self.available_nodes
 					   		.write()
-					   		.unwrap();
+					   		.ok().expect("Can't write in available_nodes");
     					map.insert(socket_addr.ip(),
     							Node::new(socket_addr,self.channel_pool.clone()));
     				},
@@ -288,36 +315,48 @@ impl Handler for EventHandler {
 				//Need for a unavailable_nodes list (down)
 				match change_type{
 					Up =>{
-						let mut map_unavailable = self.available_nodes
+						let mut map_unavailable = self.unavailable_nodes
 					   		.write()
-					   		.unwrap();
+					   		.ok().expect("Can't write in unavailable_nodes");
 					   	//To-do: treat error if node doesn't exist
-    					let node = map_unavailable.remove(&socket_addr.ip()).unwrap();
+    					let result_node = map_unavailable.remove(&socket_addr.ip());
 
-    					let mut map_available = 
-	    					self.available_nodes
-								.write()
-								.unwrap();
-    					map_available.insert(node.get_sock_addr().ip(),node);
+    					match result_node {
+    					    Some(node) => {  					
+    					    	let mut map_available = 
+			    					self.available_nodes
+										.write()
+										.ok().expect("Can't write in unavailable_nodes");
+		    					map_available.insert(node.get_sock_addr().ip(),node);
+    						},
+    					    None => println!("Node with ip {:?} wasn't found in unavailable_nodes",&socket_addr.ip()),
+    					}
+  
 					},
 					Down =>{
 						let mut map_available = self.available_nodes
 					   		.write()
-					   		.unwrap();
+					   		.ok().expect("Can't write in available_nodes");
 					   	//To-do: treat error if node doesn't exist
-    					let node = map_available.remove(&socket_addr.ip()).unwrap();
+    					let result_node = map_available.remove(&socket_addr.ip());
 
-    					let mut map_unavailable = 
-	    					self.unavailable_nodes
-								.write()
-								.unwrap();
-    					map_unavailable.insert(node.get_sock_addr().ip(),node);
+    					match result_node {
+    					    Some(node) => {
+    					    	let mut map_unavailable = 
+			    					self.unavailable_nodes
+										.write()
+										.ok().expect("Can't write in unavailable_nodes");
+	    						map_unavailable.insert(node.get_sock_addr().ip(),node);
+    					    },
+    					    None => println!("Node with ip {:?} wasn't found in available_nodes",&socket_addr.ip()),
+    					}
+    					
 					},
 					UnknownStatus => ()
 				}
 			},
 			CqlEvent::SchemaChange(change_type,socket_addr) =>{
-				println!("Schema changes are not handled yet.");
+				println!("Schema changes are not supported yet");
 			},
 			CqlEvent::UnknownEvent=> {
 				println!("We've got an UnkownEvent");

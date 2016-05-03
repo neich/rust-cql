@@ -233,7 +233,7 @@ impl Connection {
         let msg_connect = CqlMsg::Connect{
             request: msg_startup,
             tx: tx,
-            // This macro may return an error
+            // This macro can return an error
             address: try_unwrap!(self.socket.peer_addr())
         };
         let mut future = self.queue_message(event_loop,msg_connect);
@@ -333,11 +333,6 @@ impl CassResponse {
         &mut self.data
     }
 
-    /*
-    fn unwrap_read_buf(self) -> MutByteBuf {
-        self.data
-    }
-*/
     pub fn read_cql_response(&self,version: u8) -> (RCResult<CqlResponse>,bool){
         println!("Connection::CassResponse::read_cql_response");
         //println!("CqlResponse := {:?}",self.read_buf());
