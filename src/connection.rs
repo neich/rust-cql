@@ -11,6 +11,7 @@ use std::{mem, str};
 use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::error::Error;
 use connection_pool::ConnectionPool;
+use std::collections::{VecDeque,BTreeMap};
 
 use def::*;
 use def::OpcodeRequest::*;
@@ -29,24 +30,37 @@ pub struct Connection {
     // The response from reading a socket
     response: CassResponse,
     // Pending messages to be send (CQL requests)
-    pendings: Vec<CqlMsg>,
+    pendings_send: VecDeque<CqlMsg>,
+    // Pending messages to be complete (CQL requests)
+    pendings_complete: BTreeMap<i16,CqlMsg>,
     // CQL version v1, v2 or v3
     version: u8,
     // Channel to EventHandler
-    event_handler: Sender<CqlEvent>
+    event_handler: Sender<CqlEvent>,
+    // Stream id  of the next CQL Request to send
+    stream_id: i16
 }
 
 
 impl Connection {
 
-    pub fn new(socket:TcpStream,version: u8,event_handler: Sender<CqlEvent>)-> Connection{
+    pub fn new(socket:TcpStream,version: u8,event_handler: Sender<CqlEvent>) -> Connection{
+        let max_request = 
+            match version{
+                1 | 2 => 128,
+                3 => 32768,
+                _ => -1
+            };
+
         Connection {
             socket: socket,
             token: Token(1),
             response: CassResponse::new(),
-            pendings: Vec::new(),
+            pendings_send: VecDeque::new(),
+            pendings_complete: BTreeMap::new(),
             version: version,
-            event_handler: event_handler
+            event_handler: event_handler,
+            stream_id: 0
         }
     }
 
@@ -58,13 +72,77 @@ impl Connection {
         self.token = token;
     }
 
-    pub fn insert_request(&mut self,msg: CqlMsg){
-        //Consider using a LinkedList
-        self.pendings.insert(0,msg);
+    pub fn insert_request(&mut self,msg: CqlMsg) -> RCResult<()>{
+        let mut cql_msg = msg;
+        self.stream_id = try_unwrap!(self.next_stream_id());
+        println!("Stream id provided = {:?} for Token = {:?}",self.stream_id,self.token);
+        try_unwrap!(cql_msg.set_stream(self.stream_id));
+                
+        self.pendings_send.push_front(cql_msg);
+        Ok(())
     }
 
-    pub fn are_pendings(&self) -> bool{
-        self.pendings.len() > 0
+    pub fn are_pendings_send(&self) -> bool{
+        !self.pendings_send.is_empty()
+    }
+
+    pub fn are_pendings_complete(&self) -> bool{
+        !self.pendings_complete.is_empty()
+    }
+
+    fn total_requests(&self) -> usize{
+        self.pendings_complete.len()+self.pendings_send.len() 
+    }
+
+    fn max_requests_reached(&self) -> bool{
+        max_stream_id(self.stream_id,self.version) && (self.total_requests() as i16) >= self.stream_id
+    }
+
+    fn next_stream_id(&self) -> RCResult<i16>{
+        let mut stream_id = 1;
+        if self.are_pendings_send() || self.are_pendings_complete(){
+            if !max_stream_id(self.stream_id,self.version) {
+                stream_id = self.stream_id+1;
+            }
+            else{      
+                if !self.max_requests_reached()
+                {
+                    // Look up for the lowest stream_id that is not in pendings_send nor in pendings_complete 
+                    // (yes, it's a bit slow)
+                    let mut lowest = CQL_MAX_STREAM_ID_V3;
+                    let mut previous_id = -99999;
+
+                    for pendings in self.pendings_send.iter(){
+                        let next_id = pendings.get_stream().unwrap();
+                        if  next_id - previous_id > 1{
+                            lowest = next_id;
+                        }
+                        previous_id = next_id;
+                    }
+
+                    for pendings in self.pendings_send.iter(){
+                        let next_id = pendings.get_stream().unwrap();
+                        if  previous_id - next_id > 1{
+                            lowest = next_id;
+                        }
+                        previous_id = next_id;
+                    }
+                    stream_id = lowest;
+                }
+                else{
+                    // Max requests reached
+                    return Err(RCError::new(format!("Maximum request reached for current CQL v{:?}",self.version)
+                            , RCErrorType::EventLoopError));
+                }
+            }
+        }
+        Ok(stream_id)
+    }
+
+    fn decrease_stream(&mut self,stream: i16){
+        if stream == self.stream_id{
+            self.stream_id=self.stream_id-1;
+        }
     }
 
     pub fn read(&mut self, event_loop: &mut EventLoop<ConnectionPool>) {
@@ -83,7 +161,7 @@ impl Connection {
             }
             Ok(None) => {
                 println!("Reading buf = None");
-                if self.pendings.len() == 1{
+                if !self.are_pendings_send(){
                     self.reregister(event_loop,EventSet::readable());
                 }
                 else{
@@ -98,18 +176,20 @@ impl Connection {
 
     pub fn write(&mut self, event_loop: &mut EventLoop<ConnectionPool>) {
         let mut buf = ByteBuf::mut_with_capacity(2048);
-        println!("self.pendings.len = {:?}",self.pendings.len());
-        match self.pendings
-                  .pop()
+        println!("self.pendings.len = {:?}",self.pendings_send.len());
+        match self.pendings_send
+                  .pop_back()
                   .unwrap()
              {
              CqlMsg::Request{request,tx,address} => {
+                println!("Sending a request.");
                 request.serialize(&mut buf,self.version);
-                self.pendings.push(CqlMsg::Request{request:request,tx:tx,address:address});
+                self.pendings_complete.insert(request.stream,CqlMsg::Request{request:request,tx:tx,address:address});
              },
              CqlMsg::Connect{request,tx,address} =>{
+                println!("Sending a connect request.");
                 request.serialize(&mut buf,self.version);
-                self.pendings.push(CqlMsg::Connect{request:request,tx:tx,address:address});
+                self.pendings_complete.insert(request.stream,CqlMsg::Connect{request:request,tx:tx,address:address});
              },
              CqlMsg::Shutdown => {
                 panic!("Shutdown messages shouldn't be at pendings");
@@ -120,7 +200,12 @@ impl Connection {
             Ok(Some(n)) => {
                 println!("Written {} bytes",n);
                 self.reregister(event_loop,EventSet::readable());
-
+                if !self.are_pendings_send(){
+                    self.reregister(event_loop,EventSet::readable());
+                }
+                else{
+                    self.reregister(event_loop,EventSet::writable());
+                }
             }
             Ok(None) => {
                 // The socket wasn't actually ready, re-register the socket
@@ -157,8 +242,8 @@ impl Connection {
     }
 
     pub fn queue_message(&mut self,event_loop: &mut EventLoop<ConnectionPool>,request: CqlMsg){
-        self.pendings.push(request);    //Inserted in the last position to give it more priority
-        self.reregister(event_loop,EventSet::writable());
+        self.pendings_send.push_back(request);    //Inserted in the last position to give it more priority
+        //self.reregister(event_loop,EventSet::writable());
     }
 
 
@@ -263,22 +348,25 @@ impl Connection {
             }
         }
         else{
+            let cql_response = response.unwrap();
+            let stream = cql_response.stream;
             // Completes the future with a CqlResponse
             // which is a RCResult<CqlResponse>
             // so we can handle errors properly
-            if self.are_pendings(){
-                match self.pendings
-                          .pop()
-                          .take()
+            if self.are_pendings_complete(){
+                match self.pendings_complete
+                          .remove(&stream)
                           .unwrap() 
                 {
                     CqlMsg::Request{request,tx,address} => {
-                        tx.complete(response);
+                        tx.complete(Ok(cql_response));
+                        self.decrease_stream(stream);
                         self.reset_response();
                     },
                     CqlMsg::Connect{request,tx,address} => {
                         //let result = self.continue_startup_request(response.clone().unwrap(),event_loop);
-                        tx.complete(response);
+                        tx.complete(Ok(cql_response));
+                        self.decrease_stream(stream);
                         self.reset_response();
                     },
                     CqlMsg::Shutdown => {
@@ -344,7 +432,7 @@ impl CassResponse {
             Ok(val) => val,
             Err(ref err) => {
                 use std::error::Error;
-                println!("We've got an error there: {:?}",err);
+                println!("We've got an error reading response: {:?}",err);
                 return (Err(RCError::new(format!("{} -> {}", "", err.description()), RCErrorType::IOError)),false)
             }
         };
@@ -400,5 +488,36 @@ impl CqlMsg{
                 panic!("Invalid type for complete");
             }
         }
+    }
+
+    pub fn get_stream(&self,) -> RCResult<i16>
+    {
+        match *self{
+            CqlMsg::Request{ref request,ref tx,ref address} => {
+                Ok(request.stream)
+            },
+            CqlMsg::Connect{ref request,ref tx,ref address} =>{
+                Ok(request.stream)
+            },
+            _ =>{
+                panic!("Invalid type for get_stream");
+            }
+        }
+    }
+
+    pub fn set_stream(&mut self,stream: i16) -> RCResult<()>
+    {
+        match *self{
+            CqlMsg::Request{ref mut request,ref tx,ref address} => {
+                request.set_stream(stream);
+            },
+            CqlMsg::Connect{ref mut request,ref tx,ref address} =>{
+                request.set_stream(stream);
+            },
+            _ =>{
+                panic!("Invalid type for set_stream");
+            }
+        }
+        Ok(())
     }
 }
