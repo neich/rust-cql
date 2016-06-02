@@ -2,6 +2,7 @@ extern crate uuid;
 extern crate std;
 extern crate byteorder;
 extern crate num;
+extern crate decimal;
 
 use def::*;
 use def::CqlValue::*;
@@ -24,7 +25,7 @@ use std::error::Error;
 use ep::FromPrimitive;
 
 pub trait CqlReader {
-    fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>>;
+    fn read_cql_bytes_with_length(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>>;
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32>;
     fn read_cql_bytes_length_fixed(&mut self, val_type: CqlBytesSize, length: i32) -> RCResult<i32>;
 
@@ -60,9 +61,8 @@ pub trait CqlReader {
 
 
 impl<T: Read> CqlReader for T {
-    fn read_cql_bytes(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
-        let len:i32 = self.read_cql_bytes_length(val_type).unwrap();
-
+    fn read_cql_bytes_with_length(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>> {
+        let len:i32 = try_rc!(self.read_cql_bytes_length(val_type),"Error reading bytes length");
         if len < 0 {
             Ok(vec![])
         } else {
@@ -73,12 +73,10 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_bytes_length(&mut self, val_type: CqlBytesSize) -> RCResult<i32> {
-
         match val_type {
             CqlBytesSize::Cqli32 => Ok(try_bo!(self.read_i32::<BigEndian>(), "Error reading bytes length")),
             CqlBytesSize::Cqli16 => Ok(try_bo!(self.read_i16::<BigEndian>(), "Error reading bytes length") as i32),
             CqlBytesSize::Cqli8  => {
-                println!("Line 80");
                 let size = 1;
                 let mut buf = Vec::with_capacity(size);
                 try_io!(std::io::copy(&mut self.take(size as u64), &mut buf), "Error at read_exact");
@@ -97,7 +95,7 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_str(&mut self, val_type: CqlBytesSize) -> RCResult<Option<CowStr>> {
-        let vec_u8 = try_rc!(self.read_cql_bytes(val_type), "Error reading string data");
+        let vec_u8 = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading string data");
         match std::str::from_utf8(&vec_u8) {
             Ok(s) => Ok(Some(Cow::Owned(s.to_owned()))),
             Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", RCErrorType::ReadError))
@@ -120,18 +118,18 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_i64(&mut self, val_type: CqlBytesSize) -> RCResult<Option<i64>> {
-        try_rc_length!(self.read_cql_bytes_length(val_type), "Error reading bytes (long) length");
+        try_rc_length!(self.read_cql_bytes_length_fixed(val_type, size_of::<i64>() as i32), "Error reading bytes (long i64) length");
         Ok(Some(try_bo!(self.read_i64::<BigEndian>(), "Error reading long (i64)")))
     }
 
     fn read_cql_u64(&mut self, val_type: CqlBytesSize) -> RCResult<Option<u64>> {
-        try_rc!(self.read_cql_bytes_length(val_type), "Error reading bytes (long) length");
+        try_rc_length!(self.read_cql_bytes_length_fixed(val_type, size_of::<u64>() as i32), "Error reading bytes (long i64) length");
         Ok(Some(try_bo!(self.read_u64::<BigEndian>(), "Error reading long (u64)")))
     }
     
+
     fn read_cql_blob(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Vec<u8>>> {
-        let len = try_rc_length!(self.read_cql_bytes_length(val_type), "Error reading blob length");
-        Ok(Some(try_rc!(self.read_cql_bytes(val_type), "Error reading string data")))
+        Ok(Some(try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading string data")))
     }
 
     fn read_cql_boolean(&mut self, val_type: CqlBytesSize) -> RCResult<Option<bool>> {
@@ -143,7 +141,10 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_uuid(&mut self, val_type: CqlBytesSize) -> RCResult<Option<Uuid>> {
-        let vec_u8 = try_rc!(self.read_cql_bytes(val_type), "Error reading uuid data");
+        let vec_u8 = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading uuid data");
+        if vec_u8.len()<=0{
+            return Ok(None)
+        }
         match Uuid::from_bytes(&vec_u8) {
             Some(u) => Ok(Some(u)),
             None => Err(RCError::new("Invalid uuid", RCErrorType::ReadError))
@@ -151,7 +152,7 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_inet_with_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>> {
-        let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
+        let vec = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading value data");
         let ip =
             if vec.len() == 0 {
                 None
@@ -179,7 +180,7 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_inet_no_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>> {
-        let vec = try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
+        let vec = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading value data");
         if vec.len() == 0 {
             Ok(None)
         } else if vec.len() == 4 {
@@ -294,15 +295,13 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_skip(&mut self, val_type: CqlBytesSize) -> RCResult<()> {
-        let len = try_rc!(self.read_cql_bytes_length(val_type), "Error reading value length");
-        try_rc!(self.read_cql_bytes(val_type), "Error reading value data");
+        try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading value data");
         Ok(())     
     }
 
     fn read_cql_metadata(&mut self) -> RCResult<CqlMetadata> {
         let flags = try_bo!(self.read_u32::<BigEndian>(), "Error reading flags");
         let column_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading column count");
-
         let (ks, tb) =
         if flags & 0x0001 != 0 {
             let keyspace_str = try_rc_noption!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading keyspace name");
@@ -322,31 +321,43 @@ impl<T: Read> CqlReader for T {
                 let table_str = try_rc_noption!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading table name");
                 (keyspace_str, table_str)
             };
+
             let col_name = try_rc_noption!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading column name");
             let type_key = try_bo!(self.read_u16::<BigEndian>(), "Error reading type key");
+
+            let custom_type = 
+                if type_key == CqlValueType::ColumnCustom as u16{
+                    let custom_type = try_rc_noption!(self.read_cql_str(CqlBytesSize::Cqli16), "Error reading custom type");
+                    Some(custom_type)
+                }
+                else{
+                    None
+                };
+
             let type_aux1 =
-            if type_key >= 0x20 {
+            if type_key >= CqlValueType::ColumnList as u16 {
                 let ctype = try_bo!(self.read_u16::<BigEndian>(), "Error reading list/set/map type");
                 cql_column_type(ctype)
             } else {
                 CqlValueType::ColumnUnknown
             };
             let type_aux2 =
-            if type_key == 0x21 {
+            if type_key == CqlValueType::ColumnMap as u16 {
                 let ctype = try_bo!(self.read_u16::<BigEndian>(), "Error reading map type value");
                 cql_column_type(ctype)
             } else {
                 CqlValueType::ColumnUnknown
             };
-
-            row_metadata.push(CqlColMetadata {
+            let cql_col_metadata = CqlColMetadata {
                 keyspace: keyspace,
                 table: table,
                 col_name: col_name,
+                custom_type: custom_type,
                 col_type: cql_column_type(type_key),
                 col_type_aux1: type_aux1,
                 col_type_aux2: type_aux2
-            });
+            };
+            row_metadata.push(cql_col_metadata);
         }
 
         Ok(CqlMetadata {
@@ -372,19 +383,17 @@ impl<T: Read> CqlReader for T {
             ColumnASCII => Ok(CqlASCII(try_rc!(self.read_cql_str(val_type), "Error reading column value (ASCII)"))),
             ColumnVarChar => Ok(CqlVarchar(try_rc!(self.read_cql_str(val_type), "Error reading column value (VarChar)"))),
             ColumnText => Ok(CqlText(try_rc!(self.read_cql_str(val_type), "Error reading column value (Text)"))),
-
             ColumnInt => Ok(CqlInt(try_rc!(self.read_cql_i32(val_type), "Error reading column value (Int)"))),
             ColumnBigInt => Ok(CqlBigInt(try_rc!(self.read_cql_i64(val_type), "Error reading column value (BigInt)"))),
             ColumnFloat => Ok(CqlFloat(try_rc!(self.read_cql_f32(val_type), "Error reading column value (Float)"))),
             ColumnDouble => Ok(CqlDouble(try_rc!(self.read_cql_f64(val_type), "Error reading column value (Double)"))),
-
             ColumnCustom => {
                 try_rc!(self.read_cql_skip(val_type), "Error reading column value (custom)");
                 println!("Custom parse not implemented");
                 Ok(CqlUnknown)
             },
             ColumnBlob => Ok(CqlBlob(try_rc!(self.read_cql_blob(val_type), "Error reading column value (blob)"))),
-            ColumnBoolean => Ok(CqlBoolean(try_rc!(self.read_cql_boolean(val_type), "Error reading column vaue (boolean)"))),
+            ColumnBoolean => Ok(CqlBoolean(try_rc!(self.read_cql_boolean(val_type), "Error reading column value (boolean)"))),
             ColumnCounter => Ok(CqlCounter(try_rc!(self.read_cql_i64(val_type), "Error reading column value (counter"))),
             ColumnDecimal => {
                 try_rc!(self.read_cql_skip(val_type), "Error reading column value (decimal)");
@@ -444,7 +453,6 @@ impl<T: Read> CqlReader for T {
     fn read_cql_rows(&mut self, collection_size: CqlBytesSize) -> RCResult<CqlRows> {
         let metadata = try_rc!(self.read_cql_metadata(), "Error reading metadata");
         let rows_count = try_bo!(self.read_u32::<BigEndian>(), "Error reading metadata");
-
         let mut rows:Vec<CqlRow> = vec![];
         for _ in 0u32..rows_count {
             let mut row = CqlRow{ cols: vec![] };
@@ -496,7 +504,7 @@ impl<T: Read> CqlReader for T {
     fn read_cql_response(&mut self, version: u8) -> RCResult<CqlResponse> {
         let header = try_rc!(self.read_cql_frame_header(version), "Error reading CQL frame header");
 
-        let body_data = try_rc!(self.read_cql_bytes(CqlBytesSize::Cqli32), "Error reading body response");
+        let body_data = try_rc!(self.read_cql_bytes_with_length(CqlBytesSize::Cqli32), "Error reading body response");
         // Code to debug response result. It writes the response's body to a file for inspecting.
         let path = Path::new("body_data.bin");
         let display = path.display();
@@ -550,7 +558,7 @@ impl<T: Read> CqlReader for T {
                         ResultSchemaChange(change, keyspace, table)
                     },
                     Some(KindPrepared) => {
-                        let id = try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading result Prepared (id)");
+                        let id = try_rc!(reader.read_cql_bytes_with_length(CqlBytesSize::Cqli16), "Error reading result Prepared (id)");
                         let metadata = try_rc!(reader.read_cql_metadata(), "Error reading result Prepared (metadata)");
                         let meta_result = if version >= 0x02 { 
                             Some(try_rc!(reader.read_cql_metadata(), "Error reading result Prepared (metadata result)"))
@@ -563,10 +571,10 @@ impl<T: Read> CqlReader for T {
                 }
             }
             OpcodeAuthChallenge => {
-                ResponseAuthChallenge(try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading ResponseAuthChallenge"))
+                ResponseAuthChallenge(try_rc!(reader.read_cql_bytes_with_length(CqlBytesSize::Cqli16), "Error reading ResponseAuthChallenge"))
             }
             OpcodeAuthSuccess => {
-                ResponseAuthSuccess(try_rc!(reader.read_cql_bytes(CqlBytesSize::Cqli16), "Error reading ResponseAuthSuccess"))
+                ResponseAuthSuccess(try_rc!(reader.read_cql_bytes_with_length(CqlBytesSize::Cqli16), "Error reading ResponseAuthSuccess"))
             }
             OpcodeEvent => {
                 ResponseEvent(try_rc!(reader.read_cql_event(CqlBytesSize::Cqli16), "Error reading ResponseEvent"))
