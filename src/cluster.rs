@@ -12,8 +12,10 @@ use def::TopologyChangeType::*;
 use def::StatusChangeType::*;
 use def::CqlResponseBody::*;
 use def::CqlValue::*;
-use node::{Node,ChannelPool};
+use std::time::Duration;
+use node::Node;
 use connection_pool::ConnectionPool;
+use connection::CqlMsg;
 use std::convert::AsRef;
 use std::rc::Rc;
 use std::boxed::Box;
@@ -24,12 +26,12 @@ type ArcMap = Arc<RwLock<BTreeMap<IpAddr,Node>>>;
 
 pub struct Cluster{
 	// Index of the current_node we are using
-	current_node: IpAddr,	
+	current_node:  Arc<RwLock<IpAddr>>,	
 	available_nodes: ArcMap,
 	unavailable_nodes: ArcMap,
-	channel_pool: Arc<ChannelPool>,
+	channel_cpool: Sender<CqlMsg>,
 	// https://doc.rust-lang.org/error-index.html#E0038
-	balancer:  Rc<LoadBalancing>
+	balancer:  Arc<RwLock<LoadBalancing+Send+Sync>>
 }
 
 impl Cluster {
@@ -42,17 +44,14 @@ impl Cluster {
 
         let mut event_loop_conn_pool : EventLoop<ConnectionPool> = 
         		EventLoop::new().ok().expect("Couldn't create event loop");
-        let mut channel_pool = ChannelPool::new();
+        let mut channel_cpool= event_loop_conn_pool.channel();
 
-        channel_pool.add_channel(event_loop_conn_pool.channel());
-
-        let arc_channel = Arc::new(channel_pool);
 
 		//Start EventLoop<EventHandler>
         let mut event_loop : EventLoop<EventHandler> = 
         		EventLoop::new().ok().expect("Couldn't create event loop");
         let event_handler_channel = event_loop.channel();
-        let mut event_handler = EventHandler::new(availables.clone(),unavailables.clone(),arc_channel.clone());
+        let mut event_handler = EventHandler::new(availables.clone(),unavailables.clone(),channel_cpool.clone());
 
         // Only keep the event loop channel
         thread::Builder::new().name("event_handler".to_string()).spawn(move || {
@@ -72,17 +71,32 @@ impl Cluster {
         thread::Builder::new().name("connection_pool".to_string()).spawn(move || {
                 event_loop_conn_pool.run(&mut connection_pool).ok().expect("Failed to start event loop");
         });
+							
+        let balancer = Arc::new(RwLock::new(RoundRobin{index:0}));
+        let current_node = Arc::new(RwLock::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0))));
 
 		Cluster{
 			available_nodes: availables.clone(),
 			unavailable_nodes: unavailables.clone(),
-			channel_pool: arc_channel,
-			current_node: IpAddr::V4(Ipv4Addr::new(0,0,0,0)),
-			balancer: Rc::new(RoundRobin{index:0})
+			channel_cpool: channel_cpool,
+			current_node: Arc::new(RwLock::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)))),
+			balancer: balancer
 		}
 	}
 
-	pub fn set_load_balancing(&mut self,balancer: Rc<LoadBalancing>){
+	fn start_load_balancing(&self,duration:Duration){
+		let availables = self.available_nodes.clone();
+        let current_node = self.current_node.clone();
+        let balancer = self.balancer.clone();
+        let tx = 
+	        set_interval(duration,move || {
+	        	println!("set_interval");
+	        	let mut node = current_node.write().unwrap();
+	        	*node = balancer.write().unwrap().select_node(&availables.read().unwrap());
+	        });
+	}
+	
+	pub fn set_load_balancing(&mut self,balancer: Arc<RwLock<LoadBalancing+Send+Sync>>){
 		self.balancer = balancer;
 	}
 
@@ -94,10 +108,9 @@ impl Cluster {
 
 	fn add_node(&self,ip: IpAddr) -> RCResult<CqlResponse>{
 		let address = SocketAddr::new(ip,CQL_DEFAULT_PORT);
-		let mut node = Node::new(address,self.channel_pool.clone());
-		node.set_channel_pool(self.channel_pool.clone());
+		let mut node = Node::new(address,self.channel_cpool.clone());
+		node.set_channel_cpool(self.channel_cpool.clone());
 
-		//To-do: handle error
 		let response = {
 			try_unwrap!(node.connect().await())
 		};
@@ -115,11 +128,17 @@ impl Cluster {
 		response
 	}
 
-	//This operation blocks
+	// This operation blocks
 	pub fn connect_cluster(&mut self,address: SocketAddr) -> RCResult<CqlResponse>{
+		// No avaiables nodes make sure that 'tick' thread is not writing
 		if self.are_available_nodes(){
-			self.current_node = address.ip();
-			let connect_response = self.add_node(self.current_node);
+			{
+			let mut node = self.current_node.write().unwrap();
+			*node  = address.ip();
+			self.start_load_balancing(Duration::from_secs(3));
+			}
+			println!("Cluster::connect_cluster");
+			let connect_response = self.add_node(self.current_node.read().unwrap().clone());
 			match connect_response{
 				Ok(_) => {
 					//Register the connection to get Events from Cassandra
@@ -134,6 +153,7 @@ impl Cluster {
 					()
 				}
 			}
+			println!("Cluster::connect_cluster -> end");
 			return connect_response;
 		}
 		else{
@@ -172,20 +192,12 @@ impl Cluster {
 		}
 	}
 
-	fn update_current_node(&mut self){
-		self.current_node = Rc::get_mut(&mut self.balancer).unwrap()
-							.select_node(&self.available_nodes.read().unwrap());
-	}
-
-	pub fn start_cluster(&mut self){
-		//self.run_event_loop();
-	}
 
 	pub fn get_peers(&mut self) -> CassFuture{
 		let map = self.available_nodes
 			   .read()
 			   .unwrap();
-		let node = map.get(&self.current_node)
+		let node = map.get(&self.current_node.read().unwrap())
 					   .unwrap();
 		node.get_peers()
 	}
@@ -195,17 +207,48 @@ impl Cluster {
 		let map = self.available_nodes
 					   .read()
 					   .unwrap();
-		let node = map.get(&self.current_node)
+		let node = map.get(&self.current_node.read().unwrap())
 					   .unwrap();
 					   
 		node.exec_query(query_str,con)
 	}
 
-	pub fn register(&mut self) -> CassFuture{
+	//This operation blocks
+	pub fn prepared_statement(&mut self, query_str: &str) -> RCResult<CqlPreparedStat> {
+		let map = self.available_nodes
+			   .read()
+			   .unwrap();
+		let node = map.get(&self.current_node.read().unwrap())
+					   .unwrap();
+					   
+		node.prepared_statement(query_str)
+	}
+
+	 pub fn exec_prepared(&mut self, preps: &Vec<u8>, params: &Vec<CqlValue>, con: Consistency) -> CassFuture{
+		let map = self.available_nodes
+			   .read()
+			   .unwrap();
+		let node = map.get(&self.current_node.read().unwrap())
+					   .unwrap();
+					   
+		node.exec_prepared(preps,params,con)
+	}
+
+	pub fn exec_batch(&mut self, q_type: BatchType, q_vec: Vec<Query>, con: Consistency) -> CassFuture {
+		let map = self.available_nodes
+			   .read()
+			   .unwrap();
+		let node = map.get(&self.current_node.read().unwrap())
+					   .unwrap();
+					   
+		node.exec_batch(q_type,q_vec,con)
+	}
+
+	fn register(&mut self) -> CassFuture{
 		let map = self.available_nodes
 			   		.read()
 			   		.unwrap();
-		let node = 	map.get(&self.current_node)
+		let node = 	map.get(&self.current_node.read().unwrap())
 			   			.unwrap();
 		node.send_register(Vec::new())
 	}
@@ -240,15 +283,15 @@ impl Cluster {
 struct EventHandler{
 	available_nodes: ArcMap,
 	unavailable_nodes: ArcMap,
-	channel_pool: Arc<ChannelPool>
+	channel_cpool: Sender<CqlMsg>
 }
 
 impl EventHandler{
-	fn new(availables: ArcMap,unavailables: ArcMap,channel_pool : Arc<ChannelPool>) -> EventHandler{
+	fn new(availables: ArcMap,unavailables: ArcMap,channel_cpool : Sender<CqlMsg>) -> EventHandler{
 		EventHandler{
 			available_nodes: availables,
 			unavailable_nodes: unavailables,
-			channel_pool: channel_pool
+			channel_cpool: channel_cpool
 		}
 	}
 	pub fn show_cluster_information(&self){
@@ -288,25 +331,28 @@ impl Handler for EventHandler {
     		CqlEvent::TopologyChange(change_type,socket_addr) =>{
     			match change_type{
     				NewNode =>{
-    					let mut map = self.available_nodes
-					   		.write()
-					   		.ok().expect("Can't write in available_nodes");
+    					let mut map = 
+	    					self.available_nodes
+						   		.write()
+						   		.ok().expect("Can't write in available_nodes");
     					map.insert(socket_addr.ip(),
-    							Node::new(socket_addr,self.channel_pool.clone()));
+    							Node::new(socket_addr,self.channel_cpool.clone()));
     				},
     				RemovedNode =>{
-    					let mut map = self.available_nodes
-					   		.write()
-					   		.ok().expect("Can't write in available_nodes");
+    					let mut map = 
+	    					self.available_nodes
+						   		.write()
+						   		.ok().expect("Can't write in available_nodes");
     					map.remove(&socket_addr.ip());
     				},
     				MovedNode =>{
     					//Not sure about this.
-    					let mut map = self.available_nodes
-					   		.write()
-					   		.ok().expect("Can't write in available_nodes");
+    					let mut map = 
+	    					self.available_nodes
+						   		.write()
+						   		.ok().expect("Can't write in available_nodes");
     					map.insert(socket_addr.ip(),
-    							Node::new(socket_addr,self.channel_pool.clone()));
+    							Node::new(socket_addr,self.channel_cpool.clone()));
     				},
     				Unknown => ()
     			}
