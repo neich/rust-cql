@@ -4,17 +4,21 @@ extern crate uuid;
 extern crate mio;
 extern crate eventual;
 
+use std::time::Duration;
+use std::sync::mpsc::{Receiver, channel};
+use std::thread;
+use std::thread::{Builder,sleep};
 use std::net::{Ipv4Addr,Ipv6Addr,SocketAddr,IpAddr};
 use self::uuid::Uuid;
 use std::borrow::Cow;
 use std::ops::Deref;
 use std::error::Error;
-use self::eventual::Future;
+use self::eventual::{Future,Async, Timer};
 
 pub type CowStr = Cow<'static, str>;
 
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy,PartialEq)]
 pub enum OpcodeRequest {
     OpcodeStartup = 0x01,
     OpcodeOptions = 0x05,
@@ -26,7 +30,7 @@ pub enum OpcodeRequest {
     OpcodeAuthResponse = 0x0F,
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum OpcodeResponse {
     OpcodeError = 0x00,
     OpcodeReady = 0x02,
@@ -104,7 +108,7 @@ pub enum BatchType {
     Counter = 0x02
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum CqlValueType {
     ColumnCustom = 0x0000,
     ColumnASCII = 0x0001,
@@ -203,7 +207,7 @@ impl CqlEventType{
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum CqlEvent {
     TopologyChange(TopologyChangeType,SocketAddr),
     StatusChange(StatusChangeType,SocketAddr),
@@ -211,7 +215,7 @@ pub enum CqlEvent {
     UnknownEvent
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum TopologyChangeType{
     NewNode,
     RemovedNode,
@@ -230,7 +234,7 @@ impl TopologyChangeType{
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum StatusChangeType{
     Up,
     Down,
@@ -247,7 +251,7 @@ impl StatusChangeType{
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum SchemaChangeType{
     Created,
     Updated,
@@ -266,7 +270,7 @@ impl SchemaChangeType{
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum SchemaChangeOptions{
     Keyspace(CowStr),
     Table(CowStr,CowStr),
@@ -350,17 +354,18 @@ pub struct CqlTableDesc {
     pub tablename: String
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CqlColMetadata {
     pub keyspace: CowStr,
     pub table: CowStr,
     pub col_name: CowStr,
+    pub custom_type: Option<CowStr>,
     pub col_type: CqlValueType,
     pub col_type_aux1: CqlValueType,
     pub col_type_aux2: CqlValueType
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CqlMetadata {
     pub flags: u32,
     pub column_count: u32,
@@ -369,17 +374,19 @@ pub struct CqlMetadata {
     pub row_metadata: Vec<CqlColMetadata>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Pair<T, V> {
     pub key: T,
     pub value: V
 }
 
 pub type CQLList = Vec<CqlValue>;
+
 pub type CQLMap = Vec<Pair<CqlValue, CqlValue>>;
+
 pub type CQLSet = Vec<CqlValue>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CqlValue {
     CqlASCII(Option<CowStr>),
     CqlBigInt(Option<i64>),
@@ -403,12 +410,12 @@ pub enum CqlValue {
     CqlUnknown,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,PartialEq)]
 pub struct CqlRow {
     pub cols: Vec<CqlValue>,
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub struct CqlRows {
     pub metadata: CqlMetadata,
     pub rows: Vec<CqlRow>,
@@ -420,6 +427,23 @@ pub struct CqlRequest {
     pub stream: i16,
     pub opcode: OpcodeRequest,
     pub body: CqlRequestBody,
+}
+
+impl CqlRequest{
+    pub fn set_stream(&mut self,stream: i16) -> RCResult<()>{
+        if self.version==1 || self.version==2 {
+            if stream > 128{
+               return Err(RCError::new("Stream id can't be more than 128 for v1 and v2", RCErrorType::EventLoopError))
+            }
+        }
+        else if self.version == 3{
+            if stream > 32768{
+               return Err(RCError::new("Stream id can't be more than 128 for v1 and v2", RCErrorType::EventLoopError))
+            }
+        }
+        self.stream=stream;
+        Ok(())
+    }
 }
 
 pub enum CqlRequestBody {
@@ -434,7 +458,7 @@ pub enum CqlRequestBody {
     RequestRegister(Vec<CqlValue>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CqlResponse {
     pub version: u8,
     pub flags: u8,
@@ -450,7 +474,7 @@ impl CqlResponse{
 }
 
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub enum CqlResponseBody {
     ResponseError(u32, CowStr),
     ResponseReady,
@@ -469,7 +493,7 @@ pub enum CqlResponseBody {
     ResponseEmpty,
 }
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq)]
 pub struct CqlPreparedStat {
     pub id: Vec<u8>,
     pub meta: CqlMetadata,
@@ -492,9 +516,32 @@ pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"]
 pub static CQL_MAX_SUPPORTED_VERSION: u8 = 0x03;
 pub static CQL_DEFAULT_PORT: u16 = 9042;
 
+pub const CQL_MAX_STREAM_ID_V1_V2 : i16 = 128;
+
+pub const CQL_MAX_STREAM_ID_V3 : i16 = 32768;
+
 pub fn to_hex_string(bytes: &Vec<u8>) -> String {
   let strs: Vec<String> = bytes.iter()
                                .map(|b| format!("{:02X}", b))
                                .collect();
   strs.connect(" ")
+}
+
+pub fn max_stream_id(stream_id: i16,version: u8) -> bool{
+    (stream_id >= CQL_MAX_STREAM_ID_V1_V2 && (version == 1 || version == 2))
+      || (stream_id== CQL_MAX_STREAM_ID_V3 && version == 3)
+}
+
+pub fn set_interval<F>(delay: Duration,f: F) -> std::sync::mpsc::Sender<()>
+    where F: Fn(), F: Send + 'static + Sync{
+
+    let (tx, rx) = channel::<(())>();
+    thread::Builder::new().name("tick".to_string()).spawn(move || {
+        while !rx.try_recv().is_ok() {
+            sleep(delay);
+            println!("Hello there! From tick :)");
+            f();  //Do stuff here
+        }
+    }).unwrap();
+    tx
 }
