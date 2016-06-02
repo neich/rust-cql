@@ -21,7 +21,6 @@ use connection::{Connection,CqlMsg,connect};
 pub struct ConnectionPool {
     token_by_ip: BTreeMap<IpAddr,Token>,
     connections: Slab<Connection>,
-    pending_startup: Vec<Token>,
     event_handler: Sender<CqlEvent>
 }
 
@@ -30,7 +29,6 @@ impl ConnectionPool {
         ConnectionPool {
             token_by_ip: BTreeMap::new(),
             connections: Slab::new_starting_at(Token(1), 128),
-            pending_startup: Vec::new(),
             event_handler: event_handler
         }
     }
@@ -38,8 +36,9 @@ impl ConnectionPool {
     fn get_connection_with_ip(&mut self,event_loop: &mut EventLoop<ConnectionPool>,address:&IpAddr) -> Result<&mut Connection,&'static str>{
         println!("[ConnectionPool::get_connection_with_ip]");
         if !self.exists_connection_by_ip(address){
-            let token = self.create_connection(event_loop,address).unwrap();
-            return self.find_connection_by_token(token)
+            //let token = self.create_connection(event_loop,address).unwrap();
+            //return self.find_connection_by_token(token)
+            return Err("Connection doesn't exist")
         }
         else {
             self.find_connection_by_ip(address)
@@ -51,10 +50,8 @@ impl ConnectionPool {
         let mut conn = try_rc!(connect(SocketAddr::new(address.clone(),9042),
                                 None,
                                 event_loop,
-                                self.event_handler.clone()),"");
-        let token = try_rc!(self.add_connection(address.clone(),conn),"");
-        
-        self.pending_startup.push(token);
+                                self.event_handler.clone()),"Failed connecting");
+        let token = try_rc!(self.add_connection(address.clone(),conn),"Failed adding a new connection");
         Ok(token)
     }
 
@@ -174,7 +171,7 @@ impl mio::Handler for ConnectionPool {
             connection.handle_response(response,event_loop,is_event);
         }
 
-        if events.is_writable() && connection.are_pendings(){
+        if events.is_writable() && connection.are_pendings_send(){
             println!("    connection-EventSet::Writable");
             connection.write(event_loop);
         }
