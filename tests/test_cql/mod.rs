@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::io::Write;
 use cql::*;
 use self::eventual::{Future,Async};
-
+use std::thread;
 #[macro_use]
 macro_rules! assert_response(
     ($resp:expr) => (
@@ -34,7 +34,7 @@ pub fn to_hex_string(bytes: &Vec<u8>) -> String {
 }
 
 #[test]
-fn test() {
+fn test_queries() {
     println!("Connecting ...!");
     let ip = "172.17.0.2";
     let port = "9042";
@@ -79,14 +79,52 @@ fn test() {
     response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error creating table rust.test_types");
     assert_response!(response);
     println!("Result: {:?} \n", response);
-
+    /*
     q = "INSERT INTO rust.test_types
         (int_, ascii_, bigint_, blob_, boolean_, date_, decimal_, double_, float_, inet_, smallint_, text_, time_, timestamp_, timeuuid_, tinyint_, uuid_, varchar_, varint_)
-        VALUES(0, 'asdf', 0, 0x00A1, false, toDate(now()), 1.0, 1.2345, 1.234567890123, '127.0.0.1', 13, 'asdf', toTime(now()), toTimestamp(now()), now(), 12, now(), 'qwerty', 27);";
+        VALUES(0, 'asdf', 0, 0x00A1, false, toDate(now()), 1.0, 1.2345, 1.234567890123, '127.0.0.1', 13, 'asdf', '13:30:54.234', toTimestamp(now()), now(), 12, now(), 'qwerty', 27);";
     println!("cql::Query: {}", q);
     response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error inserting into table test");
     assert_response!(response);
     println!("Result: {:?} \n", response);
+    */
+    q = "select * from rust.test_types";
+    println!("cql::Query: {}", q);
+    response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test");
+    println!("Result: {:?} \n", response);
+    assert_response!(response);
 
+    q = "insert into rust.test_types (int_, ascii_,bigint_) values (?, ?,?)";
+    println!("Create prepared: {}", q);
+    let preps = try_test!(cluster.prepared_statement(q), "Error creating prepared statement");
+    println!("Created prepared with id = {}", to_hex_string(&preps.id));
 
+    println!("Execute prepared");
+    let params = &vec![cql::CqlInt(Some(7)),CqlVarchar(Some(Cow::Borrowed("Jon Snow"))), cql::CqlBigInt(Some(1234567890))];
+    response = try_test!(cluster.exec_prepared(&preps.id, params, cql::Consistency::One).await().unwrap(), "Error executing prepared statement");
+    assert_response!(response);
+    println!("Result: {:?} \n", response);
+    
+    q = "select * from rust.test_types";
+    println!("cql::Query: {}", q);
+    response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test");
+    assert_response!(response);
+    println!("Result: {:?} \n", response);
+    
+    println!("Execute batch");
+    let params2 = vec![cql::CqlInt(Some(9)),CqlVarchar(Some(Cow::Borrowed("Arya Stark"))), cql::CqlBigInt(Some(987654321))];
+    let q_vec = vec![cql::QueryStr(Cow::Borrowed("insert into rust.test_types (int_, float_) values (1, 34.56)")),
+                     cql::QueryPrepared(preps.id, params2)];
+    response = try_test!(cluster.exec_batch(cql::BatchType::Logged, q_vec, cql::Consistency::One).await().unwrap(), "Error executing batch cql::Query");
+    assert_response!(response);
+    println!("Result: {:?} \n", response);
+
+    q = "select * from rust.test_types";
+    println!("cql::Query: {}", q);
+    response = try_test!(cluster.exec_query(q, cql::Consistency::One).await().unwrap(), "Error selecting from table test");
+    assert_response!(response);
+    println!("Result: {:?} \n", response);
 }
+
+mod test_reader;
+mod test_multiple_requests;

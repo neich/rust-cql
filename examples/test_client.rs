@@ -47,12 +47,11 @@ fn test_client() {
     let ip_port = ip.to_string()+":"+port;
     
     let mut cluster = Cluster::new();
-    cluster.start_cluster();
     
     let mut response = cluster.connect_cluster(ip_port.parse().ok().expect("Couldn't parse address"));
     println!("Result: {:?} \n", response);
     
-    cluster.show_cluster_information();
+    //cluster.show_cluster_information();
     //let mut future =  cluster.get_peers();
     //response = future.await().unwrap();
     //println!("Result peers: {:?} \n", response);
@@ -66,12 +65,12 @@ fn test_client() {
             FROM system.compaction_history; 
             ";
             */
-    //let q = "SELECT keyspace_name, columnfamily_name, column_name, component_index, index_name, index_options, index_type, type, validator
-    //        FROM system.schema_columns;
-    //        ";
-    //println!("cql::Query: {}", q);
-    //response = cluster.exec_query(q, cql::Consistency::One).await().ok().expect("Error selecting from table test");
-    //println!("Result: {:?} \n", response);
+    let q = "SELECT keyspace_name, columnfamily_name, column_name, component_index, index_name, index_options, index_type, type, validator
+            FROM system.schema_columns;
+            ";
+    println!("cql::Query: {}", q);
+    response = cluster.exec_query(q, cql::Consistency::One).await().ok().expect("Error selecting from table test");
+    println!("Result: {:?} \n", response);
 
     //println!("Connected with CQL binary version v{}", cluster.version);
 
@@ -85,6 +84,6 @@ fn test_client() {
 
     // A long sleep because I'm trying to see if Cassandra sends 
     // any event message after a node change his status to up.
-    thread::sleep_ms(Duration::minutes(1).num_milliseconds() as u32);
+    //thread::sleep_ms(Duration::minutes(1).num_milliseconds() as u32);
     cluster.show_cluster_information();
 }
