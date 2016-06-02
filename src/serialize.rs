@@ -13,10 +13,10 @@ use def::RCErrorType::*;
 use def::Query::*;
 use def::CqlValue::*;
 
-pub trait CqlSerializable<'a> {
-    fn len(&'a self, version: u8) -> usize;
-    fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()>;
-    fn serialize<T: std::io::Write>(&'a self, buf: &mut T, version: u8) -> RCResult<()>;
+pub trait CqlSerializable {
+    fn len(& self, version: u8) -> usize;
+    fn serialize_size<T: std::io::Write>(& self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()>;
+    fn serialize<T: std::io::Write>(& self, buf: &mut T, version: u8) -> RCResult<()>;
 }
 
 macro_rules! write_size(
@@ -29,39 +29,39 @@ macro_rules! write_size(
     }
 );
 
-impl<'a> CqlSerializable<'a> for CqlPair {
-    fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+impl CqlSerializable for CqlPair {
+    fn serialize_size<T: std::io::Write>(& self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         try_bo!(buf.write_u16::<BigEndian>(self.key.len() as u16), "Error serializing CqlPair (key length)");
         try_io!(buf.write(self.key.as_bytes()), "Error serializing CqlPair (key)");
         try_bo!(buf.write_u16::<BigEndian>(self.value.len() as u16), "Error serializing CqlPair (value length)");
         try_io!(buf.write(self.value.as_bytes()), "Error serializing CqlPair (value)");
         Ok(())
     }
-    fn serialize<T: std::io::Write>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
+    fn serialize<T: std::io::Write>(& self, buf: &mut T, version: u8) -> RCResult<()> {
         self.serialize_size(buf, Cqli32, version)
     }
 
 
-    fn len(&'a self, version: u8) -> usize {
+    fn len(& self, version: u8) -> usize {
         return 4 + self.key.len() + self.value.len();
     }
 }
 
 
-impl<'a> CqlSerializable<'a> for CqlStringMap {
-    fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+impl CqlSerializable for CqlStringMap {
+    fn serialize_size<T: std::io::Write>(& self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         try_bo!(buf.write_u16::<BigEndian>(self.pairs.len() as u16), "Error serializing CqlStringMap (length)");
         for pair in self.pairs.iter() {
             pair.serialize_size(buf, Cqli16, version);
         }
         Ok(())
     }
-    fn serialize<T: std::io::Write>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
+    fn serialize<T: std::io::Write>(&self, buf: &mut T, version: u8) -> RCResult<()> {
         self.serialize_size(buf, Cqli16, version)
     }
 
 
-    fn len(&'a self, version: u8) -> usize {
+    fn len(& self, version: u8) -> usize {
         let mut len = 2usize;
         for pair in self.pairs.iter() {
             len += pair.len(version);
@@ -83,12 +83,12 @@ fn serialize_header<T: std::io::Write>(buf: &mut T, version: &u8, flags: &u8, st
     Ok(())
 }
 
-impl<'a> CqlSerializable<'a> for CqlRequest {
-    fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+impl CqlSerializable for CqlRequest {
+    fn serialize_size<T: std::io::Write>(& self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         Err(RCError::new("Cannot serialize Request without Client context", WriteError))
     }
 
-    fn serialize<T: std::io::Write>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
+    fn serialize<T: std::io::Write>(& self, buf: &mut T, version: u8) -> RCResult<()> {
         let len = (self.len(version)-8) as u32;
         let ocode = self.opcode as u8;
         serialize_header(buf, &version, &self.flags, &self.stream, &ocode, &len);
@@ -160,7 +160,7 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
         }
     }
 
-    fn len(&'a self, version: u8) -> usize {
+    fn len(&self, version: u8) -> usize {
         8 + match self.body {
             RequestStartup(ref map) => map.len(version),
             RequestQuery(ref query_str, _, _) => {
@@ -193,12 +193,12 @@ impl<'a> CqlSerializable<'a> for CqlRequest {
     }
 }
 
-impl<'a> CqlSerializable<'a> for Query {
-    fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+impl CqlSerializable for Query {
+    fn serialize_size<T: std::io::Write>(& self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         self.serialize(buf, version)
     }
 
-    fn serialize<T: std::io::Write>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
+    fn serialize<T: std::io::Write>(& self, buf: &mut T, version: u8) -> RCResult<()> {
         match *self {
             QueryStr(ref q_str) => {
                 try_bo!(buf.write_u8(0u8), "Error serializing BATCH query (type)");
@@ -219,7 +219,7 @@ impl<'a> CqlSerializable<'a> for Query {
         }
     }
 
-    fn len(&'a self, version: u8) -> usize {
+    fn len(&self, version: u8) -> usize {
         match *self {
             QueryStr(ref q_str) => {
                 7 + q_str.len()
@@ -233,8 +233,8 @@ impl<'a> CqlSerializable<'a> for Query {
     }
 }
 
-impl<'a> CqlSerializable<'a> for CqlValue {
-    fn serialize_size<T: std::io::Write>(&'a self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+impl CqlSerializable for CqlValue {
+    fn serialize_size<T: std::io::Write>(&self, buf: &mut T, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         match *self {
             CqlASCII(ref o) => match *o {
                 Some(ref s) => {
@@ -405,11 +405,11 @@ impl<'a> CqlSerializable<'a> for CqlValue {
 
     }
 
-    fn serialize<T: std::io::Write>(&'a self, buf: &mut T, version: u8) -> RCResult<()> {
+    fn serialize<T: std::io::Write>(&self, buf: &mut T, version: u8) -> RCResult<()> {
         self.serialize_size(buf, Cqli32, version)
     }
 
-    fn len(&'a self, version: u8) -> usize {
+    fn len(&self, version: u8) -> usize {
         match self {
             &CqlASCII(ref o) => match *o {
                 Some(ref s) => s.len() as usize,
@@ -505,18 +505,18 @@ impl<'a> CqlSerializable<'a> for CqlValue {
 }
 
 
-impl<'a, T:CqlSerializable<'a>, V:CqlSerializable<'a>> CqlSerializable<'a> for Pair<T, V> {
-    fn serialize_size<S: std::io::Write>(&'a self, buf: &mut S, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
+impl< T:CqlSerializable, V:CqlSerializable> CqlSerializable for Pair<T, V> {
+    fn serialize_size<S: std::io::Write>(& self, buf: &mut S, bytes_size: CqlBytesSize, version: u8) -> RCResult<()> {
         self.key.serialize_size(buf, bytes_size, version);
         self.value.serialize_size(buf, bytes_size, version);
         Ok(())
     }
 
-    fn serialize<S: std::io::Write>(&'a self, buf: &mut S, version: u8) -> RCResult<()> {
+    fn serialize<S: std::io::Write>(& self, buf: &mut S, version: u8) -> RCResult<()> {
         self.serialize_size(buf, Cqli32, version)
     }
 
-    fn len(&'a self, version: u8) -> usize {
+    fn len(& self, version: u8) -> usize {
         0
     }
 }
