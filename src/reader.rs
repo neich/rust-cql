@@ -9,7 +9,7 @@ use def::CqlValue::*;
 use def::CqlValueType::*;
 use def::CqlResponseBody::*;
 use def::CqlEvent::*;
-use def::RCErrorType::*;
+use error::RCErrorType::*;
 use def::CqlBytesSize::*;
 use def::KindResult::*;
 use def::OpcodeResponse::*;
@@ -23,6 +23,7 @@ use std::mem::size_of;
 use std::path::Path;
 use std::error::Error;
 use ep::FromPrimitive;
+use error::*;
 
 pub trait CqlReader {
     fn read_cql_bytes_with_length(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>>;

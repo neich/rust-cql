@@ -9,9 +9,10 @@ use std::mem;
 use def::*;
 use def::CqlBytesSize::*;
 use def::CqlRequestBody::*;
-use def::RCErrorType::*;
+use error::RCErrorType::*;
 use def::Query::*;
 use def::CqlValue::*;
+use error::*;
 
 pub trait CqlSerializable {
     fn len(& self, version: u8) -> usize;

@@ -4,10 +4,11 @@ use std::sync::{Arc, RwLock};
 use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::error::Error;
 use std::thread;
-use def::mio::{EventLoop, Sender, Handler};
+use mio::{EventLoop, Sender, Handler};
+
+use eventual::Async;
+use util;
 use def::*;
-use def::eventual::Async;
-use def::RCErrorType::*;
 use def::TopologyChangeType::*;
 use def::StatusChangeType::*;
 use def::CqlResponseBody::*;
@@ -21,6 +22,8 @@ use std::rc::Rc;
 use std::boxed::Box;
 use std::cell::RefCell;
 use load_balancing::*;
+use error::*;
+use error::RCErrorType::*;
 
 type ArcMap = Arc<RwLock<BTreeMap<IpAddr,Node>>>;
 
@@ -89,7 +92,7 @@ impl Cluster {
         let current_node = self.current_node.clone();
         let balancer = self.balancer.clone();
         let tx = 
-	        set_interval(duration,move || {
+	        util::set_interval(duration,move || {
 	        	println!("set_interval");
 	        	let mut node = current_node.write().unwrap();
 	        	*node = balancer.write().unwrap().select_node(&availables.read().unwrap());

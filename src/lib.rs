@@ -2,11 +2,15 @@
 #![crate_type = "rlib"]
 #![crate_type = "dylib"]
 
-#[macro_use] extern crate enum_primitive as ep;
+#[macro_use] 
+extern crate enum_primitive as ep;
+extern crate mio;
+extern crate eventual;
+extern crate uuid;
+extern crate bytes;
 
-//pub use client::create_client;
 pub use cluster::Cluster;
-pub use def::CassFuture;
+
 pub use def::Consistency;
 pub use def::BatchType;
 pub use def::CqlValue;
@@ -19,19 +23,22 @@ pub use def::Query::QueryStr;
 pub use def::Query::QueryPrepared;
 pub use def::OpcodeResponse;
 pub use def::CqlResponseBody;
-pub use def::RCResult;
-pub use def::RCError;
+pub use error::RCResult;
+pub use error::RCError;
 pub use reader::CqlReader;
+pub use def::CassFuture;
+use def::CqlResponse;
+
 
 #[macro_export]
 macro_rules! try_bo(
     ($call: expr, $msg: expr) => {
         match $call {
             Ok(val) => val,
-            Err(self::byteorder::Error::UnexpectedEOF) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, "Unexpected EOF"), $crate::def::RCErrorType::IOError)),
+            Err(self::byteorder::Error::UnexpectedEOF) => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, "Unexpected EOF"), $crate::error::RCErrorType::IOError)),
             Err(self::byteorder::Error::Io(ref err)) => {
             	use std::error::Error;
-            	return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            	return Err($crate::error::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::error::RCErrorType::IOError))
             }
         };
     }
@@ -56,7 +63,7 @@ macro_rules! try_rc(
     ($call: expr, $msg: expr) => {
         match $call {
             Ok(val) => val,
-            Err(ref err) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            Err(ref err) => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::error::RCErrorType::IOError))
         };
     }
 );
@@ -66,7 +73,7 @@ macro_rules! try_rc_length(
         match $call {
             Ok(-1) => return Ok(None),
             Ok(val) => val,
-            Err(ref err) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            Err(ref err) => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::error::RCErrorType::IOError))
         };
     }
 );
@@ -75,10 +82,10 @@ macro_rules! try_rc_noption(
     ($call: expr, $msg: expr) => {
         match $call {
             Ok(option) => match option {
-                None => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, "No data found (length == -1)"), $crate::def::RCErrorType::IOError)),
+                None => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, "No data found (length == -1)"), $crate::error::RCErrorType::IOError)),
                 Some(val) => val
             },
-            Err(ref err) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
+            Err(ref err) => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::error::RCErrorType::IOError))
         };
     }
 );
@@ -88,7 +95,7 @@ macro_rules! try_unwrap(
     ($call: expr) => {
         match $call {
             Ok(val) => val,
-            Err(err) => return Err($crate::def::RCError::new(format!("{:?}", err), $crate::def::RCErrorType::IOError))
+            Err(err) => return Err($crate::error::RCError::new(format!("{:?}", err), $crate::error::RCErrorType::IOError))
         };
     }
 );
@@ -98,7 +105,7 @@ macro_rules! try_unwrap_op(
     ($call: expr,$msg: expr) => {
         match $call {
             Some(val) => val,
-            None => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, ""), $crate::def::RCErrorType::IOError))
+            None => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, ""), $crate::error::RCErrorType::IOError))
         };
     }
 );
@@ -116,4 +123,6 @@ mod connection;
 mod connection_pool;
 mod node;
 mod load_balancing;
+mod util;
+mod error;
 pub mod cluster;

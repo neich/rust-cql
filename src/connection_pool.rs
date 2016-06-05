@@ -1,18 +1,16 @@
-extern crate mio;
-extern crate bytes;
-extern crate eventual;
-
-use self::eventual::{Future, Async, Complete};
-use self::mio::{Token, EventLoop, Sender, TryRead, TryWrite, EventSet};
-use self::mio::tcp::TcpStream;
-use self::mio::util::Slab;
+use eventual::{Future, Async, Complete};
+use mio::{Token, EventLoop, Sender, TryRead, TryWrite, EventSet};
+use mio::tcp::TcpStream;
+use mio::util::Slab;
+use mio;
 
 use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::collections::BTreeMap;
 use std::borrow::Cow;
 use std::error::Error;
-use def::{RCResult,RCError,CqlEvent,RCErrorType};
-use def::RCErrorType::*;
+use def::CqlEvent;
+use error::{RCResult,RCError,RCErrorType};
+use error::RCErrorType::*;
 use connection::{Connection,CqlMsg,connect};
 
 

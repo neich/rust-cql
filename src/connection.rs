@@ -1,26 +1,23 @@
-extern crate mio;
-extern crate bytes;
-extern crate eventual;
-
-use self::eventual::{Future, Async, Complete};
-use self::mio::{Token, EventLoop, Sender, TryRead, TryWrite, EventSet};
-use self::mio::tcp::TcpStream;
-use self::mio::util::Slab;
-use self::bytes::{ByteBuf, MutByteBuf};
+use eventual::{Future, Async, Complete};
+use mio;
+use mio::util::Slab;
+use mio::tcp::TcpStream;
+use mio::{Token,EventLoop, Sender, TryRead, TryWrite, EventSet};
+use bytes::{ByteBuf, MutByteBuf};
 use std::{mem, str};
 use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::error::Error;
 use connection_pool::ConnectionPool;
 use std::collections::{VecDeque,BTreeMap};
-
 use def::*;
 use def::OpcodeRequest::*;
 use def::CqlRequestBody::*;
-use def::RCErrorType::*;
 use def::CqlResponseBody::*;
 use serialize::CqlSerializable;
 use reader::*;
-
+use error::*;
+use error::RCErrorType::*;
+use util;
 
 pub struct Connection {
     // The connection's TCP socket 
@@ -95,13 +92,13 @@ impl Connection {
     }
 
     fn max_requests_reached(&self) -> bool{
-        max_stream_id(self.stream_id,self.version) && (self.total_requests() as i16) >= self.stream_id
+        util::max_stream_id(self.stream_id,self.version) && (self.total_requests() as i16) >= self.stream_id
     }
 
     fn next_stream_id(&self) -> RCResult<i16>{
         let mut stream_id = 1;
         if self.are_pendings_send() || self.are_pendings_complete(){
-            if !max_stream_id(self.stream_id,self.version) {
+            if !util::max_stream_id(self.stream_id,self.version) {
                 stream_id = self.stream_id+1;
             }
             else{      

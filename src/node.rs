@@ -1,9 +1,6 @@
-extern crate mio;
-extern crate bytes;
-extern crate eventual;
 
-use self::eventual::{Future, Async, Complete};
-use self::mio::{EventLoop,Sender};
+use eventual::{Future, Async, Complete};
+use mio::{EventLoop,Sender};
 use std::net::SocketAddr;
 use std::error::Error;
 use std::thread;
@@ -14,11 +11,12 @@ use std::time::{Instant,Duration};
 use def::*;
 use def::OpcodeRequest::*;
 use def::CqlRequestBody::*;
-use def::RCErrorType::*;
+use error::RCErrorType::*;
 use def::CqlResponseBody::*;
 use def::CqlValue::*;
 use connection::CqlMsg;
 use connection_pool::ConnectionPool;
+use error::*;
 
 pub struct Node {
     channel_cpool: Sender<CqlMsg>, 
