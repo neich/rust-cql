@@ -167,6 +167,7 @@ impl mio::Handler for ConnectionPool {
             //println!("Response from event_loop: {:?}",response);
             println!("Handling response..");
             connection.handle_response(response,event_loop,is_event);
+            connection.reset_response();
         }
 
         if events.is_writable() && connection.are_pendings_send(){

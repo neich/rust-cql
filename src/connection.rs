@@ -345,7 +345,16 @@ impl Connection {
             }
         }
         else{
-            let cql_response = response.unwrap();
+            let cql_response = 
+            match response{
+                Ok(res) => {
+                    res
+                },
+                Err(err) =>{
+                    //TODO handle error
+                    return;
+                },
+            };
             let stream = cql_response.stream;
             // Completes the future with a CqlResponse
             // which is a RCResult<CqlResponse>
@@ -353,21 +362,22 @@ impl Connection {
             if self.are_pendings_complete(){
                 match self.pendings_complete
                           .remove(&stream)
-                          .unwrap() 
                 {
-                    CqlMsg::Request{request,tx,address} => {
+                    Some(CqlMsg::Request{request,tx,address}) => {
                         tx.complete(Ok(cql_response));
                         self.decrease_stream(stream);
-                        self.reset_response();
                     },
-                    CqlMsg::Connect{request,tx,address} => {
+                    Some(CqlMsg::Connect{request,tx,address}) => {
                         //let result = self.continue_startup_request(response.clone().unwrap(),event_loop);
                         tx.complete(Ok(cql_response));
                         self.decrease_stream(stream);
-                        self.reset_response();
+
                     },
-                    CqlMsg::Shutdown => {
+                    Some(CqlMsg::Shutdown) => {
                         panic!("Shutdown messages shouldn't be at pendings");
+                    },
+                    None =>{
+                        println!("Couldn't find response with id {:?}",stream);
                     },
                 }
             }
@@ -420,7 +430,7 @@ impl CassResponse {
 
     pub fn read_cql_response(&self,version: u8) -> (RCResult<CqlResponse>,bool){
         println!("Connection::CassResponse::read_cql_response");
-        //println!("CqlResponse := {:?}",self.read_buf());
+        println!("CqlResponse := {:?}",self.read_buf());
         println!("Length slice vec: {:?}",self.read_buf().len());
         //let mut response : ByteBuf = ByteBuf::from_slice(self.read_buf().as_slice());
         //println!("Capacity: {:?}",response.capacity());
