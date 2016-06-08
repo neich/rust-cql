@@ -1,4 +1,3 @@
-extern crate uuid;
 extern crate std;
 extern crate byteorder;
 extern crate num;
@@ -14,7 +13,7 @@ use def::CqlBytesSize::*;
 use def::KindResult::*;
 use def::OpcodeResponse::*;
 
-use self::uuid::Uuid;
+use uuid::Uuid;
 use std::net::{IpAddr,Ipv4Addr, Ipv6Addr,SocketAddr,SocketAddrV4,SocketAddrV6};
 use std::borrow::{Cow, ToOwned};
 use std::io::{Read, Write, Cursor};
@@ -24,6 +23,8 @@ use std::path::Path;
 use std::error::Error;
 use ep::FromPrimitive;
 use error::*;
+use self::num::bigint::BigInt;
+
 
 pub trait CqlReader {
     fn read_cql_bytes_with_length(&mut self, val_type: CqlBytesSize) -> RCResult<Vec<u8>>;
@@ -42,6 +43,7 @@ pub trait CqlReader {
     fn read_cql_inet_with_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>>;
     fn read_cql_inet_no_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<IpAddr>>;
     fn read_cql_event(&mut self, val_type: CqlBytesSize) -> RCResult<CqlEvent>;
+    fn read_cql_varint(&mut self, val_type: CqlBytesSize)  -> RCResult<Option<BigInt>>;
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>>;
     fn read_cql_set(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLSet>>;
@@ -96,11 +98,19 @@ impl<T: Read> CqlReader for T {
     }
 
     fn read_cql_str(&mut self, val_type: CqlBytesSize) -> RCResult<Option<CowStr>> {
-        let vec_u8 = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading string data");
-        match std::str::from_utf8(&vec_u8) {
-            Ok(s) => Ok(Some(Cow::Owned(s.to_owned()))),
-            Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", RCErrorType::ReadError))
-        }     
+        let len:i32 = try_rc!(self.read_cql_bytes_length(val_type),"Error reading bytes length");
+        if len < 0 {
+            return Ok(None);
+        } else {
+            let mut buf = Vec::with_capacity(len as usize);
+            try_io!(std::io::copy(&mut self.take(len as u64), &mut buf), "Error at read_exact");
+            let vec_u8 = buf;
+            
+            match std::str::from_utf8(&vec_u8) {
+                Ok(s) => Ok(Some(Cow::Owned(s.to_owned()))),
+                Err(_) => Err(RCError::new("Error reading string, invalid utf8 sequence", RCErrorType::ReadError))
+            }     
+        }
     }
 
     fn read_cql_f32(&mut self, val_type: CqlBytesSize) -> RCResult<Option<f32>> {
@@ -152,6 +162,12 @@ impl<T: Read> CqlReader for T {
         }      
     }
 
+    fn read_cql_varint(&mut self, val_type: CqlBytesSize)  -> RCResult<Option<BigInt>> {
+        let vec_u8 = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading uuid data");
+        let base = 16;
+        Ok(BigInt::parse_bytes(&vec_u8, base))
+    }
+
     fn read_cql_inet_with_port(&mut self, val_type: CqlBytesSize) -> RCResult<Option<SocketAddr>> {
         let vec = try_rc!(self.read_cql_bytes_with_length(val_type), "Error reading value data");
         let ip =
@@ -200,11 +216,12 @@ impl<T: Read> CqlReader for T {
 
     fn read_cql_list(&mut self, col_meta: &CqlColMetadata, value_size: CqlBytesSize) -> RCResult<Option<CQLList>> {
         try_bo!(self.read_i32::<BigEndian>(), "Error reading list size");
-        let len = self.read_cql_bytes_length(value_size).unwrap();
+        let len = try_unwrap!(self.read_cql_bytes_length(value_size));
 
         let mut list: CQLList = vec![];
         for _ in 0 .. len {
-            let col = try_rc!(self.read_cql_value_single(&col_meta.col_type_aux1, value_size), "Error reading list value");
+            let col = try_rc!(self.read_cql_value_single(&col_meta.col_type_aux1, value_size), 
+                            "Error reading list value");
             list.push(col);
         }
         Ok(Some(list))
@@ -212,49 +229,61 @@ impl<T: Read> CqlReader for T {
 
     fn read_cql_event(&mut self, val_type: CqlBytesSize) -> RCResult<CqlEvent> {
 
-        let event_type = try_rc!(self.read_cql_str(val_type), "Error reading event type (str)").unwrap();
+        let event_type = try_unwrap_op!(try_rc!(self.read_cql_str(val_type), "Error reading event type (str)"));
         
         let event_type = CqlEventType::from_str(&event_type.to_string());
         let error_msg = "Error reading ";
         match event_type {
             CqlEventType::TopologyChange =>{
                 let msg = error_msg.to_string() + "CqlEventType::TopologyChange : "; 
-                let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
-                                  .unwrap();
-                let address = try_rc!(self.read_cql_inet_with_port(CqlBytesSize::Cqli8), msg+" inet (address)");
+                let change_type =   try_unwrap_op!(
+                                    try_rc!(self.read_cql_str(val_type), 
+                                    msg+" change_type (str)"));
+                let address = try_rc!(  self.read_cql_inet_with_port(CqlBytesSize::Cqli8), 
+                                        msg+" inet (address)");
                 
                 Ok(CqlEvent::TopologyChange(TopologyChangeType::from_str(
                                             &change_type.to_string()),
-                                            address.unwrap()))
+                                            try_unwrap_op!(address)))
             },
             CqlEventType::StatusChange =>{
                 let msg = error_msg.to_string() + "CqlEventType::StatusChange : "; 
-                let change_type = try_rc!(self.read_cql_str(val_type), msg+" change_type (str)")
-                                  .unwrap();
-                let address = try_rc!(self.read_cql_inet_with_port(CqlBytesSize::Cqli8), msg+" inet (address)");
+                let change_type =   try_unwrap_op!(
+                                    try_rc!(self.read_cql_str(val_type), 
+                                    msg+" change_type (str)"));
+                let address = try_rc!(  self.read_cql_inet_with_port(CqlBytesSize::Cqli8), 
+                                        msg+" inet (address)");
                 Ok(CqlEvent::StatusChange(  StatusChangeType::from_str(
                                             &change_type.to_string()),
-                                            address.unwrap()))
+                                            try_unwrap_op!(address)))
             },
             CqlEventType::SchemaChange =>{
                 let msg = error_msg.to_string() +"CqlEventType::SchemaChange : "; 
                 let change_type = try_rc!(self.read_cql_str(val_type), msg+"change_type (str)");
-                let target = try_rc!(self.read_cql_str(val_type), msg+" target (str)").unwrap();
+                let target = try_unwrap_op!(try_rc!(self.read_cql_str(val_type), msg+" target (str)"));
 
                 let options =
                     match target{
                         Cow::Borrowed(SCHEMA_CHANGE_TARGET_KEYSPACE) => {
-                            let option = try_rc!(self.read_cql_str(val_type), msg+" options (str)").unwrap();
+                            let option =    try_unwrap_op!(
+                                            try_rc!(self.read_cql_str(val_type), 
+                                            msg+" options (str)"));
                             Ok(SchemaChangeOptions::Keyspace(option))
                         },
                         Cow::Borrowed(SCHEMA_CHANGE_TARGET_TABLE) => {
-                            let option1 = try_rc!(self.read_cql_str(val_type), msg+" option1 (str)").unwrap();
+                            let option1 =   try_unwrap_op!(
+                                            try_rc!(self.read_cql_str(val_type), 
+                                            msg+" option1 (str)"));
                             let option2 = try_rc!(self.read_cql_str(val_type), msg+" option2 (str)").unwrap();
                             Ok(SchemaChangeOptions::Table(option1,option2))
                         },
                         Cow::Borrowed(SCHEMA_CHANGE_TARGET_TYPE) => {
-                            let option1 = try_rc!(self.read_cql_str(val_type), msg+" option1 (str)").unwrap();
-                            let option2 = try_rc!(self.read_cql_str(val_type), msg+" option2 (str)").unwrap();
+                            let option1 =   try_unwrap_op!(
+                                            try_rc!(self.read_cql_str(val_type), 
+                                            msg+" option1 (str)"));
+                            let option2 =   try_unwrap_op!(
+                                            try_rc!(self.read_cql_str(val_type), 
+                                            msg+" option2 (str)"));
                             Ok(SchemaChangeOptions::Type(option1,option2))
                         },
                         _ => Err(RCError::new("Unknown schema change type: ", ReadError))
@@ -404,9 +433,10 @@ impl<T: Read> CqlReader for T {
             ColumnTimestamp => Ok(CqlTimestamp(try_rc!(self.read_cql_u64(val_type), "Error reading column value (timestamp)"))),
             ColumnUuid => Ok(CqlUuid(try_rc!(self.read_cql_uuid(val_type), "Error reading column value (uuid)"))),
             ColumnVarint => {
-                try_rc!(self.read_cql_skip(val_type), "Error reading column value (varint)");
-                println!("Varint parse not implemented");
-                Ok(CqlUnknown)
+                //try_rc!(self.read_cql_skip(val_type), "Error reading column value (varint)");
+                //println!("Varint parse not implemented");
+                //Ok(CqlUnknown)
+                Ok(CqlVarint(try_rc!(self.read_cql_varint(val_type),"Error reading column value (varint)")))
             },
             ColumnTimeUuid => Ok(CqlTimeUuid(try_rc!(self.read_cql_uuid(val_type), "Error reading column value (timeuuid)"))),
             ColumnInet => Ok(CqlInet(try_rc!(self.read_cql_inet_no_port(val_type), "Error reading column value (inet)"))),
