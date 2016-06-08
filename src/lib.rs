@@ -9,6 +9,7 @@ extern crate eventual;
 extern crate uuid;
 extern crate bytes;
 
+
 pub use cluster::Cluster;
 
 pub use def::Consistency;
@@ -23,12 +24,13 @@ pub use def::Query::QueryStr;
 pub use def::Query::QueryPrepared;
 pub use def::OpcodeResponse;
 pub use def::CqlResponseBody;
-pub use error::RCResult;
-pub use error::RCError;
+pub use error::*;
+pub use error::RCErrorType::*;
 pub use reader::CqlReader;
 pub use def::CassFuture;
 use def::CqlResponse;
-
+pub use def::CqlBytesSize;
+pub use def::CqlBytesSize::*;
 
 #[macro_export]
 macro_rules! try_bo(
@@ -102,13 +104,14 @@ macro_rules! try_unwrap(
 
 #[macro_export]
 macro_rules! try_unwrap_op(
-    ($call: expr,$msg: expr) => {
+    ($call: expr) => {
         match $call {
             Some(val) => val,
-            None => return Err($crate::error::RCError::new(format!("{} -> {}", $msg, ""), $crate::error::RCErrorType::IOError))
+            None => return Err($crate::error::RCError::new(format!(""), $crate::error::RCErrorType::IOError))
         };
     }
 );
+
 
 macro_rules! CowStr_tuple_void(
     () => {
