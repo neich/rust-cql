@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use std::net::{SocketAddr,IpAddr,Ipv4Addr};
 use std::error::Error;
 use std::thread;
-use mio::{EventLoop, Sender, Handler};
+use mio::{EventLoop,EventLoopConfig, Sender, Handler};
 
 use eventual::Async;
 use util;
@@ -45,14 +45,23 @@ impl Cluster {
 
 		//Start EventLoop<ConnectionPool>
 
+		let mut config = EventLoopConfig::new();
+			config.notify_capacity(1_048_576)
+	        .messages_per_tick(1_048_576)
+	        //.timer_tick(Duration::from_millis(100))
+	        .timer_wheel_size(1_048_576)
+	        .timer_capacity(1_048_576);
+
         let mut event_loop_conn_pool : EventLoop<ConnectionPool> = 
-        		EventLoop::new().ok().expect("Couldn't create event loop");
+        		EventLoop::configured(config.clone()).ok().expect("Couldn't create event loop");
         let mut channel_cpool= event_loop_conn_pool.channel();
 
 
+    
+
 		//Start EventLoop<EventHandler>
         let mut event_loop : EventLoop<EventHandler> = 
-        		EventLoop::new().ok().expect("Couldn't create event loop");
+        		EventLoop::configured(config).ok().expect("Couldn't create event loop");
         let event_handler_channel = event_loop.channel();
         let mut event_handler = EventHandler::new(availables.clone(),unavailables.clone(),channel_cpool.clone());
 
@@ -93,7 +102,7 @@ impl Cluster {
         let balancer = self.balancer.clone();
         let tx = 
 	        util::set_interval(duration,move || {
-	        	println!("set_interval");
+	        	//println!("set_interval");
 	        	let mut node = current_node.write().unwrap();
 	        	*node = balancer.write().unwrap().select_node(&availables.read().unwrap());
 	        });
@@ -171,7 +180,7 @@ impl Cluster {
 				if cql_rows.rows.len() > 0 {
 					let rows = cql_rows.rows.clone();
 					for row in rows {
-						println!("Col: {:?}",row);
+						//println!("Col: {:?}",row);
 						match *row.cols.get(0).unwrap() {
 							CqlInet(Some(ip)) => {
 								nodes.push(ip);
