@@ -31,6 +31,8 @@ pub use def::CassFuture;
 use def::CqlResponse;
 pub use def::CqlBytesSize;
 pub use def::CqlBytesSize::*;
+pub use load_balancing::BalancerType;
+pub use load_balancing::BalancerType::*;
 
 #[macro_export]
 macro_rules! try_bo(
