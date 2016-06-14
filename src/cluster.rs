@@ -24,6 +24,7 @@ use std::cell::RefCell;
 use load_balancing::*;
 use error::*;
 use error::RCErrorType::*;
+use std::sync::mpsc;
 
 type ArcMap = Arc<RwLock<BTreeMap<IpAddr,Node>>>;
 
@@ -34,8 +35,10 @@ pub struct Cluster{
 	unavailable_nodes: ArcMap,
 	channel_cpool: Sender<CqlMsg>,
 	// https://doc.rust-lang.org/error-index.html#E0038
-	balancer:  Arc<RwLock<LoadBalancing+Send+Sync>>
+	balancer:  Arc<RwLock<LoadBalancing+Send+Sync>>,
+	balancer_sender: mpsc::Sender<()>
 }
+
 
 impl Cluster {
 
@@ -46,24 +49,28 @@ impl Cluster {
 		//Start EventLoop<ConnectionPool>
 
 		let mut config = EventLoopConfig::new();
-			config.notify_capacity(1_048_576)
-	        .messages_per_tick(1_048_576)
+			config.notify_capacity(65_536)
+	        .messages_per_tick(1_024)
 	        //.timer_tick(Duration::from_millis(100))
-	        .timer_wheel_size(1_048_576)
-	        .timer_capacity(1_048_576);
+	        .timer_wheel_size(1_024)
+	        .timer_capacity(65_536);
 
         let mut event_loop_conn_pool : EventLoop<ConnectionPool> = 
         		EventLoop::configured(config.clone()).ok().expect("Couldn't create event loop");
         let mut channel_cpool= event_loop_conn_pool.channel();
 
 
-    
+    	let balancer = Arc::new(RwLock::new(RoundRobin{index:0}));
+        let current_node = Arc::new(RwLock::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0))));
 
 		//Start EventLoop<EventHandler>
         let mut event_loop : EventLoop<EventHandler> = 
         		EventLoop::configured(config).ok().expect("Couldn't create event loop");
         let event_handler_channel = event_loop.channel();
-        let mut event_handler = EventHandler::new(availables.clone(),unavailables.clone(),channel_cpool.clone());
+        let mut event_handler = EventHandler::new(	availables.clone(),
+        										  	unavailables.clone(),
+        										  	channel_cpool.clone(),
+        										  	current_node.clone());
 
         // Only keep the event loop channel
         thread::Builder::new().name("event_handler".to_string()).spawn(move || {
@@ -78,25 +85,24 @@ impl Cluster {
         // So we 'give away' the connection pool and keep the channel.
         let mut connection_pool = ConnectionPool::new(event_handler_channel);
 
-        println!("Starting event loop...");
+        //println!("Starting event loop...");
         // Only keep the event loop channel
         thread::Builder::new().name("connection_pool".to_string()).spawn(move || {
                 event_loop_conn_pool.run(&mut connection_pool).ok().expect("Failed to start event loop");
         });
-							
-        let balancer = Arc::new(RwLock::new(RoundRobin{index:0}));
-        let current_node = Arc::new(RwLock::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0))));
+
 
 		Cluster{
 			available_nodes: availables.clone(),
 			unavailable_nodes: unavailables.clone(),
 			channel_cpool: channel_cpool,
 			current_node: Arc::new(RwLock::new(IpAddr::V4(Ipv4Addr::new(0,0,0,0)))),
-			balancer: balancer
+			balancer: balancer,
+			balancer_sender: mpsc::channel().0
 		}
 	}
 
-	fn start_load_balancing(&self,duration:Duration){
+	fn start_load_balancing(&mut self,duration:Duration){
 		let availables = self.available_nodes.clone();
         let current_node = self.current_node.clone();
         let balancer = self.balancer.clone();
@@ -106,10 +112,17 @@ impl Cluster {
 	        	let mut node = current_node.write().unwrap();
 	        	*node = balancer.write().unwrap().select_node(&availables.read().unwrap());
 	        });
+	    self.balancer_sender = tx;
 	}
 	
-	pub fn set_load_balancing(&mut self,balancer: Arc<RwLock<LoadBalancing+Send+Sync>>){
-		self.balancer = balancer;
+	pub fn set_load_balancing(&mut self,balancer: BalancerType,duration: Duration){
+		//Stop load balancer thread sending a '()' message
+		self.balancer_sender.send(());
+		match balancer{
+			BalancerType::RoundRobin => self.balancer = Arc::new(RwLock::new(RoundRobin{index:0})),
+			BalancerType::LatencyAware => self.balancer = Arc::new(RwLock::new(LatencyAware)),
+		}
+		self.start_load_balancing(duration);
 	}
 
 	pub fn are_available_nodes(&self) -> bool{
@@ -146,57 +159,38 @@ impl Cluster {
 		if self.are_available_nodes(){
 			{
 			let mut node = self.current_node.write().unwrap();
-			*node  = address.ip();
-			self.start_load_balancing(Duration::from_secs(3));
+			*node = address.ip();
 			}
-			println!("Cluster::connect_cluster");
-			let connect_response = self.add_node(self.current_node.read().unwrap().clone());
-			match connect_response{
-				Ok(_) => {
-					//Register the connection to get Events from Cassandra
-					try_unwrap!(try_unwrap!(self.register().await()));
-
-					//Get the currrent nodes from a system query
-					let peers = try_unwrap!(try_unwrap!(self.get_peers().await()));
-					let ip_nodes = try_unwrap!(self.parse_nodes(peers));
-					self.create_nodes(ip_nodes);
-				},
-				Err(_) =>{
-					()
-				}
+			{
+			self.start_load_balancing(Duration::from_secs(1));
 			}
-			println!("Cluster::connect_cluster -> end");
-			return connect_response;
+			return self.create_and_register();
 		}
 		else{
 			return Err(RCError::new("Already connected to cluster", ClusterError)) 
 		}
 	}
 
-	fn parse_nodes(&self,response: CqlResponse) -> RCResult<Vec<IpAddr>>{
-		let mut nodes = Vec::new();
-		match response.body {
-			ResultRows(cql_rows) => {
-				if cql_rows.rows.len() > 0 {
-					let rows = cql_rows.rows.clone();
-					for row in rows {
-						//println!("Col: {:?}",row);
-						match *row.cols.get(0).unwrap() {
-							CqlInet(Some(ip)) => {
-								nodes.push(ip);
-							},
-							_ => return Err(RCError::new("Error CqlResponse contains no rows", ReadError)),
-						}
-					}
-					Ok(nodes)
-				}
-				else{
-					Err(RCError::new("Error CqlResponse contains no rows", ReadError))
-				}
+	fn create_and_register(&mut self) -> RCResult<CqlResponse>{
+		let connect_response = self.add_node(self.current_node.read().unwrap().clone());
+		match connect_response{
+			Ok(_) => {
+				//Register the connection to get Events from Cassandra
+				try_unwrap!(try_unwrap!(self.register().await()));
+
+				//Get the currrent nodes from a system query
+				let peers = try_unwrap!(try_unwrap!(self.get_peers().await()));
+				let ip_nodes = try_unwrap!(parse_nodes(peers));
+				self.create_nodes(ip_nodes);
 			},
-			_ => Err(RCError::new("Error CqlResponse type must be ResultRows", ClusterError)),
+			Err(_) =>{
+				()
+			}
 		}
+		connect_response
 	}
+
+	
 
 	fn create_nodes(&mut self,ips: Vec<IpAddr>){
 		for ip in ips {
@@ -256,13 +250,15 @@ impl Cluster {
 		node.exec_batch(q_type,q_vec,con)
 	}
 
+
+
 	fn register(&mut self) -> CassFuture{
 		let map = self.available_nodes
 			   		.read()
 			   		.unwrap();
 		let node = 	map.get(&self.current_node.read().unwrap())
 			   			.unwrap();
-		node.send_register(Vec::new())
+		node.send_register()
 	}
 
 	// This temporal until I return some type
@@ -275,7 +271,7 @@ impl Cluster {
 	   		self.unavailable_nodes
 	   			.read()
 	   			.unwrap();
-	   	println!("EventHandler::show_cluster_information");
+
 		println!("--------------Available nodes-----------");
 		println!("Address");
 		for node in map_availables.iter() {
@@ -289,21 +285,53 @@ impl Cluster {
 			println!("{:?}\t",node.0);
 		}
 		println!("----------------------------------------");
+		println!("Current node: {:?}\n",self.current_node);
+		println!("----------------------------------------\n");
+		//println!("Current balaning strategy: {}\n",self.balancer);
+		//println!("----------------------------------------\n");
 	}
 }
+
+pub fn parse_nodes(response: CqlResponse) -> RCResult<Vec<IpAddr>>{
+		let mut nodes = Vec::new();
+		match response.body {
+			ResultRows(cql_rows) => {
+				if cql_rows.rows.len() > 0 {
+					let rows = cql_rows.rows.clone();
+					for row in rows {
+						//println!("Col: {:?}",row);
+						match *row.cols.get(0).unwrap() {
+							CqlInet(Some(ip)) => {
+								nodes.push(ip);
+							},
+							_ => return Err(RCError::new("Error CqlResponse contains no rows", ReadError)),
+						}
+					}
+					Ok(nodes)
+				}
+				else{
+					Err(RCError::new("Error CqlResponse contains no rows", ReadError))
+				}
+			},
+			_ => Err(RCError::new("Error CqlResponse type must be ResultRows", ClusterError)),
+		}
+	}
 
 struct EventHandler{
 	available_nodes: ArcMap,
 	unavailable_nodes: ArcMap,
-	channel_cpool: Sender<CqlMsg>
+	channel_cpool: Sender<CqlMsg>,
+	current_node: Arc<RwLock<IpAddr>>
 }
 
 impl EventHandler{
-	fn new(availables: ArcMap,unavailables: ArcMap,channel_cpool : Sender<CqlMsg>) -> EventHandler{
+	fn new(availables: ArcMap,unavailables: ArcMap,channel_cpool : Sender<CqlMsg>,
+		   current_node: Arc<RwLock<IpAddr>>) -> EventHandler{
 		EventHandler{
 			available_nodes: availables,
 			unavailable_nodes: unavailables,
-			channel_cpool: channel_cpool
+			channel_cpool: channel_cpool,
+			current_node: current_node
 		}
 	}
 	pub fn show_cluster_information(&self){
@@ -330,6 +358,7 @@ impl EventHandler{
 		}
 		println!("----------------------------------------");
 	}
+
 }
 
 impl Handler for EventHandler {
@@ -341,50 +370,41 @@ impl Handler for EventHandler {
     	println!("EventHandler::notify");
     	match msg {
     		CqlEvent::TopologyChange(change_type,socket_addr) =>{
+    			let mut map = 
+	    				self.available_nodes
+						   	.write()
+						   	.ok().expect("Can't write in available_nodes");
     			match change_type{
     				NewNode =>{
-    					let mut map = 
-	    					self.available_nodes
-						   		.write()
-						   		.ok().expect("Can't write in available_nodes");
     					map.insert(socket_addr.ip(),
-    							Node::new(socket_addr,self.channel_cpool.clone()));
+    					Node::new(socket_addr,self.channel_cpool.clone()));
     				},
     				RemovedNode =>{
-    					let mut map = 
-	    					self.available_nodes
-						   		.write()
-						   		.ok().expect("Can't write in available_nodes");
     					map.remove(&socket_addr.ip());
     				},
     				MovedNode =>{
     					//Not sure about this.
-    					let mut map = 
-	    					self.available_nodes
-						   		.write()
-						   		.ok().expect("Can't write in available_nodes");
     					map.insert(socket_addr.ip(),
-    							Node::new(socket_addr,self.channel_cpool.clone()));
+    					Node::new(socket_addr,self.channel_cpool.clone()));
     				},
     				Unknown => ()
     			}
 			},
 			CqlEvent::StatusChange(change_type,socket_addr) =>{
 				//Need for a unavailable_nodes list (down)
-				match change_type{
-					Up =>{
-						let mut map_unavailable = self.unavailable_nodes
+				let mut map_unavailable = self.unavailable_nodes
 					   		.write()
 					   		.ok().expect("Can't write in unavailable_nodes");
+				let mut map_available = self.available_nodes
+										.write()
+										.ok().expect("Can't write in unavailable_nodes");
+				match change_type{
+					Up =>{
 					   	//To-do: treat error if node doesn't exist
     					let result_node = map_unavailable.remove(&socket_addr.ip());
 
     					match result_node {
     					    Some(node) => {  					
-    					    	let mut map_available = 
-			    					self.available_nodes
-										.write()
-										.ok().expect("Can't write in unavailable_nodes");
 		    					map_available.insert(node.get_sock_addr().ip(),node);
     						},
     					    None => println!("Node with ip {:?} wasn't found in unavailable_nodes",&socket_addr.ip()),
@@ -392,18 +412,11 @@ impl Handler for EventHandler {
   
 					},
 					Down =>{
-						let mut map_available = self.available_nodes
-					   		.write()
-					   		.ok().expect("Can't write in available_nodes");
 					   	//To-do: treat error if node doesn't exist
     					let result_node = map_available.remove(&socket_addr.ip());
 
     					match result_node {
     					    Some(node) => {
-    					    	let mut map_unavailable = 
-			    					self.unavailable_nodes
-										.write()
-										.ok().expect("Can't write in unavailable_nodes");
 	    						map_unavailable.insert(node.get_sock_addr().ip(),node);
     					    },
     					    None => println!("Node with ip {:?} wasn't found in available_nodes",&socket_addr.ip()),
@@ -420,5 +433,6 @@ impl Handler for EventHandler {
 				println!("We've got an UnkownEvent");
 			}
 		}
+	
    }
 }
