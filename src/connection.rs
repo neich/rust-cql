@@ -19,6 +19,8 @@ use error::*;
 use error::RCErrorType::*;
 use util;
 
+
+#[derive(Debug)]
 pub struct Connection {
     // The connection's TCP socket 
     socket: TcpStream,
@@ -57,7 +59,7 @@ impl Connection {
             pendings_complete: BTreeMap::new(),
             version: version,
             event_handler: event_handler,
-            stream_id: 0
+            stream_id: -1
         }
     }
 
@@ -71,10 +73,17 @@ impl Connection {
 
     pub fn insert_request(&mut self,msg: CqlMsg) -> RCResult<()>{
         let mut cql_msg = msg;
-        self.stream_id = try_unwrap!(self.next_stream_id());
-        println!("Stream id provided = {:?} for Token = {:?}",self.stream_id,self.token);
+        self.stream_id = 
+        match self.next_stream_id(){
+            Ok(id)=> id,
+            Err(err) =>{
+                cql_msg.complete(Err(RCError::new("Maximum request reached", EventLoopError)));
+                return Err(RCError::new("Maximum request reached", EventLoopError));
+            },
+        };
+        //println!("Stream id provided = {:?} for Token = {:?}",self.stream_id,self.token);
         try_unwrap!(cql_msg.set_stream(self.stream_id));
-                
+        //println!("Stream id set");  
         self.pendings_send.push_front(cql_msg);
         Ok(())
     }
@@ -92,11 +101,12 @@ impl Connection {
     }
 
     fn max_requests_reached(&self) -> bool{
-        util::max_stream_id(self.stream_id,self.version) && (self.total_requests() as i16) >= self.stream_id
+        util::max_stream_id(self.stream_id,self.version) 
+        && (self.total_requests() as i32) >= self.stream_id as i32
     }
 
     fn next_stream_id(&self) -> RCResult<i16>{
-        let mut stream_id = 1;
+        let mut stream_id = 0;
         if self.are_pendings_send() || self.are_pendings_complete(){
             if !util::max_stream_id(self.stream_id,self.version) {
                 stream_id = self.stream_id+1;
@@ -111,7 +121,7 @@ impl Connection {
 
                     for pendings in self.pendings_send.iter(){
                         let next_id = pendings.get_stream().unwrap();
-                        if  next_id - previous_id > 1{
+                        if  next_id as i32 - previous_id as i32 > 1{
                             lowest = next_id;
                         }
                         previous_id = next_id;
@@ -119,7 +129,7 @@ impl Connection {
 
                     for pendings in self.pendings_send.iter(){
                         let next_id = pendings.get_stream().unwrap();
-                        if  previous_id - next_id > 1{
+                        if  previous_id as i32 - next_id as i32 > 1{
                             lowest = next_id;
                         }
                         previous_id = next_id;
@@ -147,17 +157,17 @@ impl Connection {
 
         match self.socket.try_read_buf(&mut buf) {
             Ok(Some(0)) => {
-                println!("read 0 bytes");
+                //println!("read 0 bytes");
             }
             Ok(Some(n)) => {
                 self.response.mut_read_buf().extend_from_slice(&buf.bytes());
-                println!("read {} bytes", n);
+                //println!("read {} bytes", n);
                 //println!("Read: {:?}",buf.bytes());
                 self.read(event_loop);  //Recursion here, care
 
             }
             Ok(None) => {
-                println!("Reading buf = None");
+                //println!("Reading buf = None");
                 if !self.are_pendings_send(){
                     self.reregister(event_loop,EventSet::readable());
                 }
@@ -173,18 +183,19 @@ impl Connection {
 
     pub fn write(&mut self, event_loop: &mut EventLoop<ConnectionPool>) {
         let mut buf = ByteBuf::mut_with_capacity(2048);
-        println!("self.pendings.len = {:?}",self.pendings_send.len());
+        //println!("self.pendings.len = {:?}",self.pendings_send.len());
         match self.pendings_send
                   .pop_back()
                   .unwrap()
              {
              CqlMsg::Request{request,tx,address} => {
-                println!("Sending a request.");
+                //println!("Sending a request.");
                 request.serialize(&mut buf,self.version);
+                //println!("Sending: {:?}",request);
                 self.pendings_complete.insert(request.stream,CqlMsg::Request{request:request,tx:tx,address:address});
              },
              CqlMsg::Connect{request,tx,address} =>{
-                println!("Sending a connect request.");
+                //println!("Sending a connect request.");
                 request.serialize(&mut buf,self.version);
                 self.pendings_complete.insert(request.stream,CqlMsg::Connect{request:request,tx:tx,address:address});
              },
@@ -195,14 +206,8 @@ impl Connection {
         match self.socket.try_write_buf(&mut buf.flip()) 
             {
             Ok(Some(n)) => {
-                println!("Written {} bytes",n);
+                //println!("Written {} bytes",n);
                 self.reregister(event_loop,EventSet::readable());
-                if !self.are_pendings_send(){
-                    self.reregister(event_loop,EventSet::readable());
-                }
-                else{
-                    self.reregister(event_loop,EventSet::writable());
-                }
             }
             Ok(None) => {
                 // The socket wasn't actually ready, re-register the socket
@@ -214,7 +219,7 @@ impl Connection {
             }
         }
 
-        println!("Ended write"); 
+        //println!("Ended write"); 
     }
 
     pub fn reregister(&self, event_loop: &mut EventLoop<ConnectionPool>,events : EventSet) {
@@ -230,12 +235,13 @@ impl Connection {
     
     pub fn register(&self, event_loop: &mut EventLoop<ConnectionPool>,events : EventSet) {
 
-        println!("Connection::register");
+        //println!("Connection::register");
         //println!("Registering socket ip: {:?} ",self.socket.peer_addr().ok().expect("Couldn't unwrap ip").ip());
         event_loop.register(&self.socket, 
                             self.token, 
                             events,  
-                            mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
+                            mio::PollOpt::edge() | mio::PollOpt::oneshot())
+                    .ok().expect("Couldn't register connection");;
     }
 
     pub fn queue_message(&mut self,event_loop: &mut EventLoop<ConnectionPool>,request: CqlMsg){
@@ -299,7 +305,7 @@ impl Connection {
     }
 
     pub fn send_startup(&mut self, creds: Option<Vec<CowStr>>,event_loop: &mut EventLoop<ConnectionPool>) -> RCResult<()>{
-        println!("Connection::send_startup");
+        //println!("Connection::send_startup");
         let body = CqlStringMap {
             pairs:vec![CqlPair{key: "CQL_VERSION", value: CQL_VERSION_STRINGS[(self.version-1) as usize]}],
         };
@@ -328,7 +334,7 @@ impl Connection {
 
     pub fn handle_response(&mut self,response: RCResult<CqlResponse>, event_loop: &mut EventLoop<ConnectionPool>, is_event : bool ){
         if is_event {
-            println!("It seems we've got an event!");
+            //println!("It seems we've got an event!");
             //Do event stuff
             match response {
                 Ok(event) => {
@@ -352,6 +358,7 @@ impl Connection {
                 },
                 Err(err) =>{
                     //TODO handle error
+                    println!("Error in response {:?}",err);
                     return;
                 },
             };
@@ -388,7 +395,7 @@ impl Connection {
 pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>,event_loop: &mut EventLoop<ConnectionPool>,event_handler: Sender<CqlEvent>) -> RCResult<Connection> {
 
     let mut version = CQL_MAX_SUPPORTED_VERSION;
-    println!("Connection::connect");
+    //println!("Connection::connect");
 
     let res = TcpStream::connect(&address);
     if res.is_err() {
@@ -407,6 +414,7 @@ pub fn connect(address: SocketAddr, creds:Option<Vec<CowStr>>,event_loop: &mut E
     
 }
 
+#[derive(Debug)]
 struct CassResponse {
     data : Vec<u8>
 }
@@ -429,9 +437,9 @@ impl CassResponse {
     }
 
     pub fn read_cql_response(&self,version: u8) -> (RCResult<CqlResponse>,bool){
-        println!("Connection::CassResponse::read_cql_response");
-        println!("CqlResponse := {:?}",self.read_buf());
-        println!("Length slice vec: {:?}",self.read_buf().len());
+        //println!("Connection::CassResponse::read_cql_response");
+        //println!("CqlResponse := {:?}",self.read_buf());
+        //println!("Length slice vec: {:?}",self.read_buf().len());
         //let mut response : ByteBuf = ByteBuf::from_slice(self.read_buf().as_slice());
         //println!("Capacity: {:?}",response.capacity());
         let rc_result = self.read_buf().as_slice().read_cql_response(version);
@@ -443,13 +451,14 @@ impl CassResponse {
                 return (Err(RCError::new(format!("{} -> {}", "", err.description()), RCErrorType::IOError)),false)
             }
         };
-        println!("CqlResponse := {:?}",cql_response);
+        //println!("CqlResponse := {:?}",cql_response);
         let is_event = cql_response.is_event();
         (Ok(cql_response),is_event)
     }
 
 }
 
+#[derive(Debug)]
 pub enum CqlMsg{
     Request{
         request: CqlRequest,
