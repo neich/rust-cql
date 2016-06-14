@@ -8,7 +8,7 @@ use std::ops::Deref;
 use std::error::Error;
 use def::CowStr;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum RCErrorType {
     ReadError,
     WriteError,
@@ -21,7 +21,7 @@ pub enum RCErrorType {
     ClusterError
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct RCError {
     pub kind: RCErrorType,
     pub desc: CowStr,
