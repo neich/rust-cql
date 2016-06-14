@@ -419,7 +419,7 @@ impl<T: Read> CqlReader for T {
             ColumnDouble => Ok(CqlDouble(try_rc!(self.read_cql_f64(val_type), "Error reading column value (Double)"))),
             ColumnCustom => {
                 try_rc!(self.read_cql_skip(val_type), "Error reading column value (custom)");
-                println!("Custom parse not implemented");
+                //println!("Custom parse not implemented");
                 Ok(CqlUnknown)
             },
             ColumnBlob => Ok(CqlBlob(try_rc!(self.read_cql_blob(val_type), "Error reading column value (blob)"))),
@@ -427,7 +427,7 @@ impl<T: Read> CqlReader for T {
             ColumnCounter => Ok(CqlCounter(try_rc!(self.read_cql_i64(val_type), "Error reading column value (counter"))),
             ColumnDecimal => {
                 try_rc!(self.read_cql_skip(val_type), "Error reading column value (decimal)");
-                println!("Decimal parse not implemented");
+                //println!("Decimal parse not implemented");
                 Ok(CqlUnknown)
             },
             ColumnTimestamp => Ok(CqlTimestamp(try_rc!(self.read_cql_u64(val_type), "Error reading column value (timestamp)"))),
@@ -537,21 +537,21 @@ impl<T: Read> CqlReader for T {
 
         let body_data = try_rc!(self.read_cql_bytes_with_length(CqlBytesSize::Cqli32), "Error reading body response");
         // Code to debug response result. It writes the response's body to a file for inspecting.
-        let path = Path::new("body_data.bin");
-        let display = path.display();
+        //let path = Path::new("body_data.bin");
+        //let display = path.display();
 
         // Open a file in write-only mode, returns `IoResult<File>`
-        let mut file = match std::fs::File::create(&path) {
-            Err(why) => panic!("couldn't create {}: {}", display, why.description()),
-            Ok(file) => file,
-        };
+        //let mut file = match std::fs::File::create(&path) {
+        //    Err(why) => panic!("couldn't create {}: {}", display, why.description()),
+        //    Ok(file) => file,
+        //};
 
-        match file.write(&body_data) {
-            Err(why) => {
-                panic!("couldn't write to {}: {}", display, why.description())
-            },
-            Ok(_) => println!("successfully wrote to {}", display),
-        }
+        //match file.write(&body_data) {
+        //    Err(why) => {
+        //        panic!("couldn't write to {}: {}", display, why.description())
+        //    },
+        //    Ok(_) => println!("successfully wrote to {}", display),
+        //}
 
         //
 
