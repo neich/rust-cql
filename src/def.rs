@@ -21,7 +21,7 @@ pub struct CqlFrameHeader {
 }
 
 
-#[derive(Clone, Copy,PartialEq)]
+#[derive(Debug,Clone, Copy,PartialEq)]
 pub enum OpcodeRequest {
     OpcodeStartup = 0x01,
     OpcodeOptions = 0x05,
@@ -84,7 +84,7 @@ impl OpcodeResponse {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug,Clone, Copy)]
 pub enum Consistency {
     Any = 0x0000,
     One = 0x0001,
@@ -97,7 +97,7 @@ pub enum Consistency {
     Unknown,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug,Clone, Copy)]
 pub enum BatchType {
     Logged = 0x00,
     Unlogged = 0x01,
@@ -184,7 +184,7 @@ impl CqlEventType{
     }
 }
 
-
+#[derive(Debug)]
 pub struct CqlRequest {
     pub version: u8,
     pub flags: u8,
@@ -196,12 +196,13 @@ pub struct CqlRequest {
 impl CqlRequest{
     pub fn set_stream(&mut self,stream: i16) -> RCResult<()>{
         if self.version==1 || self.version==2 {
-            if stream > 128{
+            if stream as i32 > 128{
+
                return Err(RCError::new("Stream id can't be more than 128 for v1 and v2", RCErrorType::EventLoopError))
             }
         }
         else if self.version == 3{
-            if stream > 32768{
+            if stream as i32 > 32768{
                return Err(RCError::new("Stream id can't be more than 128 for v1 and v2", RCErrorType::EventLoopError))
             }
         }
@@ -210,6 +211,7 @@ impl CqlRequest{
     }
 }
 
+#[derive(Debug)]
 pub enum CqlRequestBody {
     RequestStartup(CqlStringMap),
     RequestCred(Vec<CowStr>),
@@ -322,6 +324,7 @@ pub struct CqlPreparedStat {
     pub meta_result: Option<CqlMetadata>
 }
 
+#[derive(Debug)]
 pub enum Query {
     QueryStr(CowStr),
     QueryPrepared(Vec<u8>, Vec<CqlValue>),
@@ -465,9 +468,15 @@ pub static CQL_VERSION_STRINGS:  [&'static str; 3] = ["3.0.0", "3.0.0", "3.0.0"]
 pub static CQL_MAX_SUPPORTED_VERSION: u8 = 0x03;
 pub static CQL_DEFAULT_PORT: u16 = 9042;
 
-pub const CQL_MAX_STREAM_ID_V1_V2 : i16 = 128;
+//Max stream id is 2^7-1. 
+//Stream can go from 0 to 127. 
+//Maximum of 128 requests simulatenous requests
+pub const CQL_MAX_STREAM_ID_V1_V2 : i16 = 127;
 
-pub const CQL_MAX_STREAM_ID_V3 : i16 = 32768;
+//Max stream id is 2^15-1. 
+//Stream can go from 0 to 32767. 
+//Maximum of 32768 requests simulatenous requests
+pub const CQL_MAX_STREAM_ID_V3 : i16 = 32767;
 
 //------------------------------------------------------------
 
