@@ -57,9 +57,14 @@ impl Node{
     //    self.run_event_loop();
     //}
     pub fn get_latency(&self) -> Duration{
-        let start = Instant::now();
-        self.exec_dummy_query().await();
-        Instant::now() - start 
+        let total = Duration::new(0,0);
+        for _ in 1..5 {
+            let start = Instant::now();
+            self.exec_dummy_query().await();
+            let elapsed = Instant::now() - start;
+            let total = total + elapsed;
+        }
+        total/5
     }
 
     pub fn exec_query(& self, query_str: &str, con: Consistency) -> CassFuture {
@@ -145,7 +150,7 @@ impl Node{
         future
     }
 
-    pub fn send_register(&self,params: Vec<CqlValue>) -> CassFuture{
+    pub fn send_register(&self) -> CassFuture{
         //println!("Node::send_register");
         let params = vec![ CqlVarchar( Some(CqlEventType::StatusChange.get_str())),
                            CqlVarchar( Some(CqlEventType::TopologyChange.get_str() ))
@@ -184,14 +189,13 @@ impl Node{
     }
 
     fn exec_dummy_query(& self) -> CassFuture {
-        let query_str = "SELECT now() FROM system.local;";
         let con = Consistency::One;
         let q = CqlRequest {
             version: self.version,
             flags: 0x00,
             stream: 0x01,
-            opcode: OpcodeQuery,
-            body: RequestQuery(String::from(query_str), con, 0)};
+            opcode: OpcodeOptions,
+            body: RequestOptions};
         self.send_message(q)
     }
 }

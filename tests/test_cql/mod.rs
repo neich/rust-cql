@@ -125,3 +125,4 @@ fn test_queries() {
 
 mod test_reader;
 mod test_multiple_requests;
+mod test_events;
