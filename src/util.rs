@@ -21,8 +21,8 @@ pub fn to_hex_string(bytes: &Vec<u8>) -> String {
 }
 
 pub fn max_stream_id(stream_id: i16,version: u8) -> bool{
-    (stream_id >= CQL_MAX_STREAM_ID_V1_V2 && (version == 1 || version == 2))
-      || (stream_id== CQL_MAX_STREAM_ID_V3 && version == 3)
+    (stream_id as i32 >= CQL_MAX_STREAM_ID_V1_V2 as i32 && (version == 1 || version == 2))
+      || (stream_id as i32 == CQL_MAX_STREAM_ID_V3 as i32 && version == 3)
 }
 
 pub fn set_interval<F>(delay: Duration,f: F) -> Sender<()>
