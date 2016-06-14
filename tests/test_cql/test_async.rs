@@ -89,10 +89,6 @@ fn test_n_requests_async(){
     thread::sleep_ms(5000);
 }
 
-//#[test]
-//#[should_panic]
-fn test_more_requests(){
-    test_multiple_requests(10000);
-}
+
 
 
