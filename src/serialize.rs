@@ -4,7 +4,7 @@ extern crate byteorder;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use std::borrow::Cow;
-use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian, Error};
+use self::byteorder::{ReadBytesExt, WriteBytesExt, BigEndian, LittleEndian};
 use std::mem;
 
 use super::def::*;

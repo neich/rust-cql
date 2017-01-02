@@ -142,8 +142,8 @@ impl<T: std::io::Read> CqlReader for T {
         }
         let vec_u8 = try_rc!(self.read_cql_bytes(val_type), "Error reading uuid data");
         match Uuid::from_bytes(&vec_u8) {
-            Some(u) => Ok(Some(u)),
-            None => Err(RCError::new("Invalid uuid", RCErrorType::ReadError))
+            Ok(u) => Ok(Some(u)),
+            Err(err) => Err(RCError::new("Invalid uuid", RCErrorType::ReadError))
         }      
     }
 

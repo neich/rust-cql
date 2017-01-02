@@ -13,7 +13,7 @@ git = "https://github.com/rust-lang/uuid.git"
 git = "https://github.com/rust-lang/num"
 
 [dependencies]
-byteorder = "*"
+byteorder = "1"
 
 [dependencies]
 enum_primitive = "*"
