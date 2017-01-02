@@ -25,8 +25,7 @@ macro_rules! try_bo(
     ($call: expr, $msg: expr) => {
         match $call {
             Ok(val) => val,
-            Err(self::byteorder::Error::UnexpectedEOF) => return Err($crate::def::RCError::new(format!("{} -> {}", $msg, "Unexpected EOF"), $crate::def::RCErrorType::IOError)),
-            Err(self::byteorder::Error::Io(ref err)) => {
+            Err(ref err) => {
             	use std::error::Error;
             	return Err($crate::def::RCError::new(format!("{} -> {}", $msg, err.description()), $crate::def::RCErrorType::IOError))
             }
